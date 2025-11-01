@@ -1,0 +1,15 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Quiz Questions Collection
+    match /quizQuestions/{questionId} {
+      // Allow authenticated users to read questions
+      allow read: if request.auth != null;
+      
+      // Allow only admin users (with isAdmin claim) to write
+      allow create, update, delete: if request.auth != null && 
+                                      request.auth.token.isAdmin == true;
+    }
+  }
+}
+
