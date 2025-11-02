@@ -4,7 +4,8 @@ export function QuestionForm({ question, onSave, onCancel }) {
   const [questionText, setQuestionText] = useState('');
   const [options, setOptions] = useState(['', '', '', '']);
   const [correctIndex, setCorrectIndex] = useState(0);
-  const [difficulty, setDifficulty] = useState('Medium');
+  const [level, setLevel] = useState(1);
+  const [usertype, setUsertype] = useState([]);
   const [explanation, setExplanation] = useState('');
 
   useEffect(() => {
@@ -12,7 +13,8 @@ export function QuestionForm({ question, onSave, onCancel }) {
       setQuestionText(question.questionText || '');
       setOptions(question.options || ['', '', '', '']);
       setCorrectIndex(question.correctIndex || 0);
-      setDifficulty(question.difficulty || 'Medium');
+      setLevel(question.level || 1);
+      setUsertype(question.usertype || []);
       setExplanation(question.explanation || '');
     }
   }, [question]);
@@ -41,11 +43,17 @@ export function QuestionForm({ question, onSave, onCancel }) {
       return;
     }
 
+    if (usertype.length === 0) {
+      alert('Please select at least one user type');
+      return;
+    }
+
     onSave({
       questionText: questionText.trim(),
       options: options.map(opt => opt.trim()),
       correctIndex,
-      difficulty,
+      level,
+      usertype: usertype,
       explanation: explanation.trim()
     });
   }
@@ -90,16 +98,68 @@ export function QuestionForm({ question, onSave, onCancel }) {
           </div>
 
           <div style={styles.formGroup}>
-            <label>Difficulty: *</label>
+            <label>Level: *</label>
             <select
-              value={difficulty}
-              onChange={(e) => setDifficulty(e.target.value)}
+              value={level}
+              onChange={(e) => setLevel(Number(e.target.value))}
               style={styles.select}
             >
-              <option value="Easy">Easy</option>
-              <option value="Medium">Medium</option>
-              <option value="Hard">Hard</option>
+              <option value={1}>1</option>
+              <option value={2}>2</option>
+              <option value={3}>3</option>
+              <option value={4}>4</option>
             </select>
+          </div>
+
+          <div style={styles.formGroup}>
+            <label>User Type: * (select one or more)</label>
+            <div style={styles.checkboxGroup}>
+              <label style={styles.checkboxLabel}>
+                <input
+                  type="checkbox"
+                  checked={usertype.includes('practitioner')}
+                  onChange={(e) => {
+                    if (e.target.checked) {
+                      setUsertype([...usertype, 'practitioner']);
+                    } else {
+                      setUsertype(usertype.filter(ut => ut !== 'practitioner'));
+                    }
+                  }}
+                  style={styles.checkbox}
+                />
+                Practitioner
+              </label>
+              <label style={styles.checkboxLabel}>
+                <input
+                  type="checkbox"
+                  checked={usertype.includes('patient')}
+                  onChange={(e) => {
+                    if (e.target.checked) {
+                      setUsertype([...usertype, 'patient']);
+                    } else {
+                      setUsertype(usertype.filter(ut => ut !== 'patient'));
+                    }
+                  }}
+                  style={styles.checkbox}
+                />
+                Patient
+              </label>
+              <label style={styles.checkboxLabel}>
+                <input
+                  type="checkbox"
+                  checked={usertype.includes('youth')}
+                  onChange={(e) => {
+                    if (e.target.checked) {
+                      setUsertype([...usertype, 'youth']);
+                    } else {
+                      setUsertype(usertype.filter(ut => ut !== 'youth'));
+                    }
+                  }}
+                  style={styles.checkbox}
+                />
+                Youth
+              </label>
+            </div>
           </div>
 
           <div style={styles.formGroup}>
@@ -180,6 +240,24 @@ const styles = {
     border: '1px solid #ccc',
     borderRadius: '4px',
     boxSizing: 'border-box'
+  },
+  checkboxGroup: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '0.5rem',
+    marginTop: '0.5rem'
+  },
+  checkboxLabel: {
+    display: 'flex',
+    alignItems: 'center',
+    cursor: 'pointer',
+    fontSize: '1rem'
+  },
+  checkbox: {
+    marginRight: '0.5rem',
+    cursor: 'pointer',
+    width: '18px',
+    height: '18px'
   },
   buttonGroup: {
     display: 'flex',

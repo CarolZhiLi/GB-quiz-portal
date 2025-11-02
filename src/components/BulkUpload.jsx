@@ -11,9 +11,9 @@ export function BulkUpload({ onComplete, onCancel }) {
 
   function downloadTemplate() {
     const templateData = [
-      ['questionText', 'option1', 'option2', 'option3', 'option4', 'correctIndex', 'difficulty', 'explanation'],
-      ['What is 2 + 2?', '3', '4', '5', '6', '1', 'Easy', 'Basic addition'],
-      ['What is the capital of France?', 'London', 'Berlin', 'Paris', 'Madrid', '2', 'Medium', 'Paris is the capital city of France']
+      ['questionText', 'option1', 'option2', 'option3', 'option4', 'correctIndex', 'level', 'usertype', 'explanation'],
+      ['What is 2 + 2?', '3', '4', '5', '6', '1', '1', 'practitioner,patient', 'Basic addition'],
+      ['What is the capital of France?', 'London', 'Berlin', 'Paris', 'Madrid', '2', '2', 'youth', 'Paris is the capital city of France']
     ];
 
     const ws = XLSX.utils.aoa_to_sheet(templateData);
@@ -25,6 +25,11 @@ export function BulkUpload({ onComplete, onCancel }) {
   async function handleUpload() {
     if (!file) {
       alert('Please select a file');
+      return;
+    }
+
+    if (!db) {
+      alert('Firebase not configured. Please update src/firebase/config.js with your Firebase credentials and restart the server.');
       return;
     }
 
@@ -66,6 +71,11 @@ export function BulkUpload({ onComplete, onCancel }) {
   }
 
   async function processData(data) {
+    if (!db) {
+      alert('Firebase not configured. Please update src/firebase/config.js with your Firebase credentials and restart the server.');
+      return;
+    }
+
     let successCount = 0;
     let errorCount = 0;
     const errors = [];
@@ -109,10 +119,28 @@ export function BulkUpload({ onComplete, onCancel }) {
           continue;
         }
 
-        const difficulty = row.difficulty || row.Difficulty || 'Medium';
-        if (!['Easy', 'Medium', 'Hard'].includes(difficulty)) {
+        const level = row.level || row.Level || 1;
+        // Convert to number if it's a string
+        const levelNum = typeof level === 'string' ? parseInt(level, 10) : Number(level);
+        if (isNaN(levelNum) || levelNum < 1 || levelNum > 4) {
           errorCount++;
-          errors.push(`Row ${i + 2}: Invalid difficulty (must be Easy, Medium, or Hard)`);
+          errors.push(`Row ${i + 2}: Invalid level (must be 1, 2, 3, or 4)`);
+          continue;
+        }
+
+        const usertypeStr = row.usertype || row.Usertype || row['User Type'] || 'practitioner';
+        // Parse usertype - can be comma-separated or single value
+        const usertypeArray = typeof usertypeStr === 'string' 
+          ? usertypeStr.split(',').map(ut => ut.trim().toLowerCase()).filter(ut => ut)
+          : [String(usertypeStr).toLowerCase()];
+        
+        // Validate usertype values
+        const validUsertypes = ['practitioner', 'patient', 'youth'];
+        const validUsertypeArray = usertypeArray.filter(ut => validUsertypes.includes(ut));
+        
+        if (validUsertypeArray.length === 0) {
+          errorCount++;
+          errors.push(`Row ${i + 2}: Invalid user type "${usertypeStr}" (must be one or more of: practitioner, patient, youth)`);
           continue;
         }
 
@@ -123,7 +151,8 @@ export function BulkUpload({ onComplete, onCancel }) {
           questionText: questionText.trim(),
           options: options,
           correctIndex: correctIndex,
-          difficulty: difficulty,
+          level: levelNum,
+          usertype: validUsertypeArray,
           explanation: explanation.trim(),
           createdAt: new Date(),
           updatedAt: new Date()

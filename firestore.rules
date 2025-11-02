@@ -1,15 +1,16 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Quiz Questions Collection
+    // Quiz Questions Collection - Allow read and write for all authenticated users
+    // Since authentication was removed, we'll allow public access
+    // WARNING: This allows anyone to read/write. For production, you should add authentication.
     match /quizQuestions/{questionId} {
-      // Allow authenticated users to read questions
-      allow read: if request.auth != null;
+      // Allow read for everyone
+      allow read: if true;
       
-      // Allow only admin users (with isAdmin claim) to write
-      allow create, update, delete: if request.auth != null && 
-                                      request.auth.token.isAdmin == true;
+      // Allow write (create, update, delete) for everyone
+      // In production, you should restrict this to authenticated admin users
+      allow create, update, delete: if true;
     }
   }
 }
-

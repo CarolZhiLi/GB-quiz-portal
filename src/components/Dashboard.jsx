@@ -1,7 +1,6 @@
 import { useState, useEffect } from 'react';
 import { collection, getDocs, addDoc, updateDoc, deleteDoc, doc, query, orderBy } from 'firebase/firestore';
 import { db } from '../firebase/config';
-import { useAuth } from '../contexts/AuthContext';
 import { QuestionForm } from './QuestionForm';
 import { BulkUpload } from './BulkUpload';
 
@@ -11,7 +10,6 @@ export function Dashboard() {
   const [editingQuestion, setEditingQuestion] = useState(null);
   const [showForm, setShowForm] = useState(false);
   const [showBulkUpload, setShowBulkUpload] = useState(false);
-  const { logout } = useAuth();
 
   useEffect(() => {
     loadQuestions();
@@ -19,6 +17,13 @@ export function Dashboard() {
 
   async function loadQuestions() {
     try {
+      // Check if Firebase is configured
+      if (!db) {
+        console.warn('Firebase not configured. App will work in view-only mode.');
+        setQuestions([]);
+        setLoading(false);
+        return;
+      }
       const q = query(collection(db, 'quizQuestions'), orderBy('createdAt', 'desc'));
       const querySnapshot = await getDocs(q);
       const questionsData = [];
@@ -28,7 +33,7 @@ export function Dashboard() {
       setQuestions(questionsData);
     } catch (error) {
       console.error('Error loading questions:', error);
-      alert('Error loading questions: ' + error.message);
+      setQuestions([]);
     } finally {
       setLoading(false);
     }
@@ -36,16 +41,18 @@ export function Dashboard() {
 
   async function handleSave(questionData) {
     try {
+      if (!db) {
+        alert('Firebase not configured. Please update src/firebase/config.js with your Firebase credentials.');
+        return;
+      }
       const dataToSave = {
         ...questionData,
         updatedAt: new Date()
       };
 
       if (editingQuestion) {
-        // Update existing
         await updateDoc(doc(db, 'quizQuestions', editingQuestion.id), dataToSave);
       } else {
-        // Create new
         dataToSave.createdAt = new Date();
         await addDoc(collection(db, 'quizQuestions'), dataToSave);
       }
@@ -65,6 +72,10 @@ export function Dashboard() {
     }
 
     try {
+      if (!db) {
+        alert('Firebase not configured. Please update src/firebase/config.js with your Firebase credentials.');
+        return;
+      }
       await deleteDoc(doc(db, 'quizQuestions', questionId));
       loadQuestions();
     } catch (error) {
@@ -89,14 +100,17 @@ export function Dashboard() {
   }
 
   if (loading) {
-    return <div style={styles.loading}>Loading questions...</div>;
+    return (
+      <div style={styles.container}>
+        <div style={styles.loading}>Loading questions...</div>
+      </div>
+    );
   }
 
   return (
     <div style={styles.container}>
       <header style={styles.header}>
         <h1>Quiz Content Management</h1>
-        <button onClick={logout} style={styles.logoutButton}>Logout</button>
       </header>
 
       <div style={styles.actions}>
@@ -109,7 +123,8 @@ export function Dashboard() {
           <thead>
             <tr>
               <th style={styles.th}>Question Text</th>
-              <th style={styles.th}>Difficulty</th>
+              <th style={styles.th}>Level</th>
+              <th style={styles.th}>User Type</th>
               <th style={styles.th}>Options</th>
               <th style={styles.th}>Date Created</th>
               <th style={styles.th}>Actions</th>
@@ -118,13 +133,18 @@ export function Dashboard() {
           <tbody>
             {questions.length === 0 ? (
               <tr>
-                <td colSpan="5" style={styles.emptyCell}>No questions found. Add your first question!</td>
+                <td colSpan="6" style={styles.emptyCell}>No questions found. Add your first question!</td>
               </tr>
             ) : (
               questions.map((question) => (
                 <tr key={question.id}>
                   <td style={styles.td}>{question.questionText}</td>
-                  <td style={styles.td}>{question.difficulty}</td>
+                  <td style={styles.td}>{question.level}</td>
+                  <td style={styles.td}>
+                    {question.usertype && question.usertype.length > 0
+                      ? question.usertype.join(', ')
+                      : 'N/A'}
+                  </td>
                   <td style={styles.td}>
                     {question.options?.length || 0} option(s)
                   </td>
@@ -182,20 +202,9 @@ const styles = {
     margin: '0 auto'
   },
   header: {
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'center',
     marginBottom: '2rem',
     paddingBottom: '1rem',
     borderBottom: '2px solid #ccc'
-  },
-  logoutButton: {
-    padding: '0.5rem 1rem',
-    backgroundColor: '#dc3545',
-    color: 'white',
-    border: 'none',
-    borderRadius: '4px',
-    cursor: 'pointer'
   },
   actions: {
     display: 'flex',
@@ -268,4 +277,3 @@ const styles = {
     fontSize: '1.2rem'
   }
 };
-
