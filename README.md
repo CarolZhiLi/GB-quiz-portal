@@ -19,16 +19,23 @@ npm install
 
 ### 2. Configure Firebase
 
-1. Open `src/firebase/config.js`
-2. Replace the placeholder values with your Firebase project configuration:
-   - `YOUR_API_KEY`
-   - `YOUR_AUTH_DOMAIN`
-   - `YOUR_PROJECT_ID`
-   - `YOUR_STORAGE_BUCKET`
-   - `YOUR_MESSAGING_SENDER_ID`
-   - `YOUR_APP_ID`
+This project reads Firebase credentials from environment variables (Vite-style).
 
-You can find these values in your Firebase Console under Project Settings > General > Your apps.
+1. In Firebase Console, create a project and enable Firestore (in production or test as needed)
+2. Create a Web App in the project to get the config values
+3. Copy `.env.example` to `.env.local` at the repo root
+4. Fill in your values:
+
+```
+VITE_FIREBASE_API_KEY=YOUR_API_KEY
+VITE_FIREBASE_AUTH_DOMAIN=YOUR_PROJECT_ID.firebaseapp.com
+VITE_FIREBASE_PROJECT_ID=YOUR_PROJECT_ID
+VITE_FIREBASE_STORAGE_BUCKET=YOUR_PROJECT_ID.appspot.com
+VITE_FIREBASE_MESSAGING_SENDER_ID=YOUR_SENDER_ID
+VITE_FIREBASE_APP_ID=YOUR_APP_ID
+```
+
+The app initializes Firebase from these values in `src/firebase/config.js:6-12` and logs basic debug info on startup.
 
 ### 3. Set Up Firebase Authentication
 
@@ -38,19 +45,24 @@ You can find these values in your Firebase Console under Project Settings > Gene
 
 ### 4. Configure Firestore Security Rules
 
-Add the following security rules to your Firestore database. Replace `YOUR_ADMIN_EMAIL` with your admin user's email:
+For development you can start with permissive rules (see `firestore.rules`), but for production lock them down. A common pattern is:
 
 ```javascript
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Allow read for authenticated users
     match /quizQuestions/{questionId} {
-      allow read: if request.auth != null;
-      allow write: if request.auth != null && request.auth.token.isAdmin == true;
+      allow read: if request.auth != null; // authenticated users can read
+      allow write: if request.auth != null && request.auth.token.isAdmin == true; // only admins write
     }
   }
 }
+```
+
+Deploy rules with Firebase CLI:
+
+```
+firebase deploy --only firestore:rules
 ```
 
 ### 5. Set Admin Custom Claim
@@ -97,7 +109,11 @@ admin.auth().getUserByEmail('your-admin@email.com')
 npm run dev
 ```
 
-The application will be available at `http://localhost:3000`
+The application will be available at `http://localhost:3000`.
+
+On startup, check the browser console for:
+- `FIREBASE CONFIG DEBUG` values
+- `✅ Firebase initialized successfully` (means your env vars are set correctly)
 
 ### Production Build
 
@@ -199,4 +215,13 @@ quiz_management/
 - All data is stored in the `quizQuestions` collection in Firestore
 - Questions require a minimum of 2 options
 - The correct answer is specified by index (0-based)
+
+### Firestore Collections
+
+- `quizQuestions`
+  - Fields: `questionText` (string), `options` (array<string>), `correctIndex` (number), `level` (number 1–4), `usertype` (array of `practitioner|patient|youth`), `explanation` (string), `createdAt` (timestamp), `updatedAt` (timestamp)
+  - Used in:
+    - `src/components/Dashboard.jsx` for CRUD
+    - `src/components/BulkUpload.jsx` for bulk import
+
 
