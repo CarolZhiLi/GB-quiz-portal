@@ -1,10 +1,12 @@
 import { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { collection, getDocs, addDoc, updateDoc, deleteDoc, doc, query, orderBy } from 'firebase/firestore';
 import { db } from '../firebase/config';
 import { QuestionForm } from './QuestionForm';
 import { BulkUpload } from './BulkUpload';
 
 export function Dashboard() {
+  const navigate = useNavigate();
   const [questions, setQuestions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [editingQuestion, setEditingQuestion] = useState(null);
@@ -24,12 +26,33 @@ export function Dashboard() {
         setLoading(false);
         return;
       }
-      const q = query(collection(db, 'quizQuestions'), orderBy('createdAt', 'desc'));
-      const querySnapshot = await getDocs(q);
+      // Get all questions without orderBy to include those without createdAt
+      const querySnapshot = await getDocs(collection(db, 'quizQuestions'));
       const questionsData = [];
       querySnapshot.forEach((doc) => {
         questionsData.push({ id: doc.id, ...doc.data() });
       });
+      
+      // Sort: questions with createdAt first (newest first), then questions without createdAt at bottom
+      questionsData.sort((a, b) => {
+        const aHasDate = a.createdAt && (a.createdAt.toDate || typeof a.createdAt === 'object' || typeof a.createdAt === 'string');
+        const bHasDate = b.createdAt && (b.createdAt.toDate || typeof b.createdAt === 'object' || typeof b.createdAt === 'string');
+        
+        // If both have dates, sort by date (newest first)
+        if (aHasDate && bHasDate) {
+          const aDate = a.createdAt.toDate ? a.createdAt.toDate() : new Date(a.createdAt);
+          const bDate = b.createdAt.toDate ? b.createdAt.toDate() : new Date(b.createdAt);
+          return bDate.getTime() - aDate.getTime();
+        }
+        
+        // If only one has date, it comes first
+        if (aHasDate && !bHasDate) return -1;
+        if (!aHasDate && bHasDate) return 1;
+        
+        // If neither has date, keep original order (at bottom)
+        return 0;
+      });
+      
       setQuestions(questionsData);
     } catch (error) {
       console.error('Error loading questions:', error);
@@ -116,6 +139,7 @@ export function Dashboard() {
       <div style={styles.actions}>
         <button onClick={handleAddNew} style={styles.addButton}>Add New Question</button>
         <button onClick={() => setShowBulkUpload(true)} style={styles.uploadButton}>Bulk Upload</button>
+        <button onClick={() => navigate('/quiz-generator')} style={styles.generatorButton}>Quiz Generator</button>
       </div>
 
       <div style={styles.tableContainer}>
@@ -223,6 +247,15 @@ const styles = {
   uploadButton: {
     padding: '0.75rem 1.5rem',
     backgroundColor: '#17a2b8',
+    color: 'white',
+    border: 'none',
+    borderRadius: '4px',
+    cursor: 'pointer',
+    fontSize: '1rem'
+  },
+  generatorButton: {
+    padding: '0.75rem 1.5rem',
+    backgroundColor: '#6f42c1',
     color: 'white',
     border: 'none',
     borderRadius: '4px',
