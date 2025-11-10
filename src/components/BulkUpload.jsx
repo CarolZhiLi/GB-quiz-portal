@@ -1,6 +1,6 @@
 import { useState } from 'react';
-import { collection, addDoc } from 'firebase/firestore';
-import { db } from '../firebase/config';
+import { collection, addDoc, doc, updateDoc } from 'firebase/firestore';
+import { db, auth } from '../firebase/config';
 import * as XLSX from 'xlsx';
 import Papa from 'papaparse';
 
@@ -79,6 +79,26 @@ export function BulkUpload({ onComplete, onCancel }) {
     let successCount = 0;
     let errorCount = 0;
     const errors = [];
+    let batchRef = null;
+    let batchId = null;
+
+    try {
+      // Create staging batch metadata
+      batchRef = await addDoc(collection(db, 'stagingBatches'), {
+        status: 'pending',
+        createdAt: new Date(),
+        createdByUid: auth?.currentUser?.uid || null,
+        createdByEmail: auth?.currentUser?.email || null,
+        totals: { success: 0, error: 0, total: data.length },
+        notes: ''
+      });
+      batchId = batchRef.id;
+    } catch (e) {
+      console.error('Error creating staging batch:', e);
+      alert('Error creating staging batch: ' + e.message);
+      setUploading(false);
+      return;
+    }
 
     for (let i = 0; i < data.length; i++) {
       const row = data[i];
@@ -147,8 +167,8 @@ export function BulkUpload({ onComplete, onCancel }) {
 
         const explanation = row.explanation || row.Explanation || '';
 
-        // Save to Firestore
-        await addDoc(collection(db, 'quizQuestions'), {
+        // Save to Firestore staging subcollection
+        await addDoc(collection(db, 'stagingBatches', batchId, 'questions'), {
           questionText: questionText.trim(),
           options: options,
           correctIndex: correctIndex,
@@ -156,7 +176,9 @@ export function BulkUpload({ onComplete, onCancel }) {
           usertype: validUsertypeArray,
           explanation: explanation.trim(),
           createdAt: new Date(),
-          updatedAt: new Date()
+          updatedAt: new Date(),
+          published: false,
+          publishedBatchId: null
         });
 
         successCount++;
@@ -166,11 +188,24 @@ export function BulkUpload({ onComplete, onCancel }) {
       }
     }
 
+    // Update staging batch totals
+    try {
+      if (batchRef) {
+        await updateDoc(doc(db, 'stagingBatches', batchId), {
+          totals: { success: successCount, error: errorCount, total: data.length },
+          updatedAt: new Date()
+        });
+      }
+    } catch (e) {
+      console.warn('Failed updating staging batch totals:', e);
+    }
+
     setResults({
       success: successCount,
       error: errorCount,
       total: data.length,
-      errors: errors.slice(0, 10) // Show first 10 errors
+      errors: errors.slice(0, 10), // Show first 10 errors
+      batchId
     });
     setUploading(false);
   }
@@ -208,6 +243,9 @@ export function BulkUpload({ onComplete, onCancel }) {
                 <span style={styles.errorText}> {results.error} rows were skipped due to errors.</span>
               )}
             </p>
+            {results.batchId && (
+              <p><strong>Batch ID:</strong> {results.batchId} · Submitted for admin review.</p>
+            )}
             {results.errors.length > 0 && (
               <div style={styles.errorList}>
                 <strong>Errors:</strong>

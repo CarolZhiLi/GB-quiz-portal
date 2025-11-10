@@ -15,6 +15,7 @@ export function useAuth() {
 export function AuthProvider({ children }) {
   const [currentUser, setCurrentUser] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [isAdmin, setIsAdmin] = useState(false);
 
   function login(email, password) {
     if (!auth) {
@@ -33,11 +34,25 @@ export function AuthProvider({ children }) {
   useEffect(() => {
     if (!auth) {
       setLoading(false);
+      setIsAdmin(false);
       return;
     }
 
-    const unsubscribe = onAuthStateChanged(auth, (user) => {
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
       setCurrentUser(user);
+      if (user) {
+        try {
+          await user.getIdToken(true); // force refresh to pick up new custom claims
+          const res = await user.getIdTokenResult();
+          setIsAdmin(res.claims?.admin === true);
+        } catch (_) {
+          setIsAdmin(false);
+        } finally {
+          setLoading(false);
+        }
+        return;
+      }
+      setIsAdmin(false);
       setLoading(false);
     });
 
@@ -46,6 +61,7 @@ export function AuthProvider({ children }) {
 
   const value = {
     currentUser,
+    isAdmin,
     login,
     logout
   };

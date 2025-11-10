@@ -1,16 +1,45 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Quiz Questions Collection - Allow read and write for all authenticated users
-    // Since authentication was removed, we'll allow public access
-    // WARNING: This allows anyone to read/write. For production, you should add authentication.
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && (request.auth.token.admin == true);
+    }
+
+    // Live Quiz Questions - public read, admin-only writes
     match /quizQuestions/{questionId} {
-      // Allow read for everyone
       allow read: if true;
-      
-      // Allow write (create, update, delete) for everyone
-      // In production, you should restrict this to authenticated admin users
-      allow create, update, delete: if true;
+      allow create, update, delete: if isAdmin();
+    }
+
+    // Staging batches metadata
+    match /stagingBatches/{batchId} {
+      // Anyone can read batch metadata (adjust to isAdmin() if you want private)
+      allow read: if true;
+
+      // Allow batch creation without auth for development convenience
+      // For production, change to: if isSignedIn();
+      allow create: if true;
+
+      // Allow updates/deletes by admin OR by the creator.
+      // Also allow unauthenticated updates if the creator is anonymous (createdByUid == null).
+      allow update, delete: if isAdmin() ||
+        (isSignedIn() && request.auth.uid == resource.data.createdByUid) ||
+        (!isSignedIn() && resource.data.createdByUid == null);
+    }
+
+    // Staging questions under a batch
+    match /stagingBatches/{batchId}/questions/{qid} {
+      // Anyone can read staged question docs (adjust as needed)
+      allow read: if true;
+
+      // Writes allowed for admin or the creator of the parent batch.
+      allow create, update, delete: if isAdmin() ||
+        (isSignedIn() && request.auth.uid == get(/databases/$(database)/documents/stagingBatches/$(batchId)).data.createdByUid) ||
+        (!isSignedIn() && get(/databases/$(database)/documents/stagingBatches/$(batchId)).data.createdByUid == null);
     }
   }
 }
