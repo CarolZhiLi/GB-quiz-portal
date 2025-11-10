@@ -1,9 +1,16 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { collection, getDocs, addDoc, updateDoc, deleteDoc, doc, query, orderBy } from 'firebase/firestore';
-import { db } from '../firebase/config';
+import { collection, getDocs, setDoc, updateDoc, deleteDoc, doc } from 'firebase/firestore';
+import { ref as storageRef, uploadBytes, deleteObject } from 'firebase/storage';
+import { db, storage } from '../firebase/config';
 import { QuestionForm } from './QuestionForm';
 import { BulkUpload } from './BulkUpload';
+
+const STORAGE_BUCKET =
+  import.meta.env.VITE_FIREBASE_STORAGE_BUCKET ||
+  import.meta.env.EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET ||
+  'granvillebiomedicalapp.appspot.com';
+const STORAGE_GS_PREFIX = `gs://${STORAGE_BUCKET}/`;
 
 export function Dashboard() {
   const navigate = useNavigate();
@@ -71,16 +78,47 @@ export function Dashboard() {
         alert('Firebase not configured. Please update src/firebase/config.js with your Firebase credentials.');
         return;
       }
+
+      const { imageFile, removeExistingImage, ...rest } = questionData;
       const dataToSave = {
-        ...questionData,
+        ...rest,
         updatedAt: new Date()
       };
 
+      if (typeof dataToSave.imageUrl === 'string') {
+        dataToSave.imageUrl = dataToSave.imageUrl.trim();
+        if (dataToSave.imageUrl.length === 0) {
+          delete dataToSave.imageUrl;
+        }
+      }
+
+      const shouldUploadImage = typeof File !== 'undefined' ? imageFile instanceof File : !!imageFile;
+      const previousImageUrl = editingQuestion?.imageUrl;
+      let docRef;
+
       if (editingQuestion) {
-        await updateDoc(doc(db, 'quizQuestions', editingQuestion.id), dataToSave);
+        docRef = doc(db, 'quizQuestions', editingQuestion.id);
+        if (shouldUploadImage) {
+          const imagePath = await uploadQuestionImage(docRef.id, imageFile);
+          dataToSave.imageUrl = imagePath;
+          await deleteQuestionImage(previousImageUrl);
+        } else if (shouldRemoveImageField({ removeExistingImage, previousImageUrl, nextImageUrl: dataToSave.imageUrl })) {
+          await deleteQuestionImage(previousImageUrl);
+          delete dataToSave.imageUrl;
+        } else if (!dataToSave.imageUrl && previousImageUrl) {
+          dataToSave.imageUrl = previousImageUrl;
+        } else if (dataToSave.imageUrl && previousImageUrl && dataToSave.imageUrl !== previousImageUrl) {
+          await deleteQuestionImage(previousImageUrl);
+        }
+        await updateDoc(docRef, dataToSave);
       } else {
+        docRef = doc(collection(db, 'quizQuestions'));
+        if (shouldUploadImage) {
+          const imagePath = await uploadQuestionImage(docRef.id, imageFile);
+          dataToSave.imageUrl = imagePath;
+        }
         dataToSave.createdAt = new Date();
-        await addDoc(collection(db, 'quizQuestions'), dataToSave);
+        await setDoc(docRef, dataToSave);
       }
 
       setShowForm(false);
@@ -123,6 +161,70 @@ export function Dashboard() {
   function handleBulkUploadComplete() {
     setShowBulkUpload(false);
     loadQuestions();
+  }
+
+  async function uploadQuestionImage(questionId, file) {
+    if (!storage) {
+      throw new Error('Firebase storage not configured. Please update src/firebase/config.js with your Firebase credentials.');
+    }
+
+    const extension = getFileExtension(file?.name);
+    const storagePath = `images/anatomyQuestions/${questionId}.${extension}`;
+    const imageRef = storageRef(storage, storagePath);
+    await uploadBytes(imageRef, file);
+
+    return `${STORAGE_GS_PREFIX}${storagePath}`;
+  }
+
+  function getFileExtension(filename = '') {
+    if (typeof filename !== 'string') {
+      return 'jpg';
+    }
+    const parts = filename.split('.');
+    if (parts.length <= 1) {
+      return 'jpg';
+    }
+    const ext = parts.pop()?.trim().toLowerCase();
+    return ext || 'jpg';
+  }
+
+  function shouldRemoveImageField({ removeExistingImage, previousImageUrl, nextImageUrl }) {
+    if (!previousImageUrl) {
+      return false;
+    }
+    if (removeExistingImage) {
+      return true;
+    }
+    if (typeof nextImageUrl === 'undefined') {
+      return true;
+    }
+    return false;
+  }
+
+  async function deleteQuestionImage(existingUrl) {
+    if (!existingUrl || !storage) {
+      return;
+    }
+    const storagePath = extractStoragePath(existingUrl);
+    if (!storagePath) {
+      return;
+    }
+    try {
+      const objectRef = storageRef(storage, storagePath);
+      await deleteObject(objectRef);
+    } catch (error) {
+      console.warn('Error deleting image from storage:', error);
+    }
+  }
+
+  function extractStoragePath(url = '') {
+    if (typeof url !== 'string') {
+      return null;
+    }
+    if (url.startsWith(STORAGE_GS_PREFIX)) {
+      return url.replace(STORAGE_GS_PREFIX, '');
+    }
+    return null;
   }
 
   const totalPages = Math.max(1, Math.ceil(questions.length / pageSize));

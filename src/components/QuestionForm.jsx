@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 
 export function QuestionForm({ question, onSave, onCancel }) {
   const [questionText, setQuestionText] = useState('');
@@ -8,6 +8,9 @@ export function QuestionForm({ question, onSave, onCancel }) {
   const [usertype, setUsertype] = useState([]);
   const [explanation, setExplanation] = useState('');
   const [imageUrl, setImageUrl] = useState('');
+  const [imageFile, setImageFile] = useState(null);
+  const [removeExistingImage, setRemoveExistingImage] = useState(false);
+  const fileInputRef = useRef(null);
 
   useEffect(() => {
     if (question) {
@@ -19,12 +22,39 @@ export function QuestionForm({ question, onSave, onCancel }) {
       setExplanation(question.explanation || '');
       setImageUrl(question.imageUrl || '');
     }
+    setImageFile(null);
+    setRemoveExistingImage(false);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
   }, [question]);
 
   function handleOptionChange(index, value) {
     const newOptions = [...options];
     newOptions[index] = value;
     setOptions(newOptions);
+  }
+
+  function handleImageFileChange(event) {
+    const file = event.target.files?.[0] || null;
+    setImageFile(file);
+    setRemoveExistingImage(false);
+  }
+
+  function clearSelectedImage() {
+    setImageFile(null);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  }
+
+  function handleRemoveExistingImage() {
+    setRemoveExistingImage(true);
+    setImageUrl('');
+    setImageFile(null);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
   }
 
   function handleSubmit(e) {
@@ -57,7 +87,9 @@ export function QuestionForm({ question, onSave, onCancel }) {
       level,
       usertype: usertype,
       explanation: explanation.trim(),
-      imageUrl: imageUrl.trim()
+      imageUrl: imageUrl.trim(),
+      imageFile,
+      removeExistingImage
     });
   }
 
@@ -166,11 +198,52 @@ export function QuestionForm({ question, onSave, onCancel }) {
           </div>
 
           <div style={styles.formGroup}>
-            <label>Image URL (optional):</label>
+            <label>Image (optional):</label>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              onChange={handleImageFileChange}
+              style={styles.fileInput}
+            />
+            {imageFile ? (
+              <div style={styles.helperText}>
+                Selected file: <strong>{imageFile.name}</strong>
+                <button
+                  type="button"
+                  onClick={clearSelectedImage}
+                  style={styles.removeFileButton}
+                >
+                  Remove
+                </button>
+              </div>
+            ) : (
+              question?.imageUrl?.trim() && !removeExistingImage && (
+                <div style={styles.helperText}>
+                  Current image: <span>{question?.imageUrl}</span>
+                  <button
+                    type="button"
+                    onClick={handleRemoveExistingImage}
+                    style={styles.secondaryButton}
+                  >
+                    Remove current image
+                  </button>
+                </div>
+              )
+            )}
+            {removeExistingImage && question?.imageUrl?.trim() && (
+              <div style={styles.warningText}>
+                Current image will be removed when you save.
+              </div>
+            )}
+            <label style={styles.subLabel}>Or paste an image URL:</label>
             <input
               type="url"
               value={imageUrl}
-              onChange={(e) => setImageUrl(e.target.value)}
+              onChange={(e) => {
+                setRemoveExistingImage(false);
+                setImageUrl(e.target.value);
+              }}
               placeholder="https://firebasestorage.googleapis.com/..."
               style={styles.textInput}
             />
@@ -235,6 +308,49 @@ const styles = {
     border: '1px solid #ccc',
     borderRadius: '4px',
     boxSizing: 'border-box'
+  },
+  fileInput: {
+    width: '100%',
+    marginTop: '0.5rem',
+    marginBottom: '0.5rem'
+  },
+  helperText: {
+    fontSize: '0.875rem',
+    color: '#555',
+    display: 'flex',
+    alignItems: 'center',
+    gap: '0.5rem',
+    marginBottom: '0.5rem'
+  },
+  removeFileButton: {
+    padding: '0.25rem 0.5rem',
+    backgroundColor: '#dc3545',
+    color: 'white',
+    border: 'none',
+    borderRadius: '4px',
+    cursor: 'pointer',
+    fontSize: '0.75rem'
+  },
+  subLabel: {
+    display: 'block',
+    fontSize: '0.95rem',
+    fontWeight: 500,
+    marginTop: '0.5rem',
+    marginBottom: '0.5rem'
+  },
+  secondaryButton: {
+    padding: '0.25rem 0.5rem',
+    backgroundColor: '#ffc107',
+    color: '#212529',
+    border: 'none',
+    borderRadius: '4px',
+    cursor: 'pointer',
+    fontSize: '0.75rem'
+  },
+  warningText: {
+    fontSize: '0.85rem',
+    color: '#d9534f',
+    marginBottom: '0.5rem'
   },
   optionRow: {
     display: 'flex',

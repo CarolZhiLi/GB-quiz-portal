@@ -1,6 +1,7 @@
-import { initializeApp } from 'firebase/app';
+﻿import { initializeApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
 import { getFirestore } from 'firebase/firestore';
+import { getStorage } from 'firebase/storage';
 
 
 const firebaseConfig = {
@@ -14,7 +15,7 @@ const firebaseConfig = {
 
 
 // Initialize Firebase - handle errors gracefully for viewing without config
-let app, auth, db;
+let app, auth, db, storage;
 
 try {
     // Debug: log what we're getting from env
@@ -50,9 +51,10 @@ try {
         app = initializeApp(firebaseConfig);
         auth = getAuth(app);
         db = getFirestore(app);
-        console.log('✅ Firebase initialized successfully');
+        storage = getStorage(app);
+        console.log('鉁?Firebase initialized successfully');
     } else {
-        console.error('❌ Firebase config validation failed!', {
+        console.error('鉂?Firebase config validation failed!', {
             apiKey: firebaseConfig.apiKey ? 'present' : 'MISSING',
             projectId: firebaseConfig.projectId ? 'present' : 'MISSING',
             apiKeyType: typeof firebaseConfig.apiKey,
@@ -64,15 +66,18 @@ try {
         // Don't initialize Firebase if using placeholder values
         auth = null;
         db = null;
+        storage = null;
         app = null;
     }
 } catch (error) {
-    console.error('❌ Firebase initialization error:', error);
+    console.error('鉂?Firebase initialization error:', error);
     auth = null;
     db = null;
+    storage = null;
     app = null;
 }
 
-export { auth, db };
+export { auth, db, storage };
 export default app;
+
 
