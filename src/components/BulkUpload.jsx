@@ -109,9 +109,10 @@ export function BulkUpload({ onComplete, onCancel }) {
         }
 
         // Get correct index (handle both number and string)
-        let correctIndex = row.correctIndex || row['Correct Index'] || row.correct_index || row['Correct Answer'];
+        let correctIndex = row.correctIndex ?? row['Correct Index'] ?? row.correct_index ?? row['Correct Answer'];
         if (typeof correctIndex === 'string') {
-          correctIndex = parseInt(correctIndex, 10);
+          const trimmedIndex = correctIndex.trim();
+          correctIndex = trimmedIndex === '' ? NaN : parseInt(trimmedIndex, 10);
         }
         if (isNaN(correctIndex) || correctIndex < 0 || correctIndex >= options.length) {
           errorCount++;
