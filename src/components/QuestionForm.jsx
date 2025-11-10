@@ -7,6 +7,7 @@ export function QuestionForm({ question, onSave, onCancel }) {
   const [level, setLevel] = useState(1);
   const [usertype, setUsertype] = useState([]);
   const [explanation, setExplanation] = useState('');
+  const [imageUrl, setImageUrl] = useState('');
 
   useEffect(() => {
     if (question) {
@@ -16,6 +17,7 @@ export function QuestionForm({ question, onSave, onCancel }) {
       setLevel(question.level || 1);
       setUsertype(question.usertype || []);
       setExplanation(question.explanation || '');
+      setImageUrl(question.imageUrl || '');
     }
   }, [question]);
 
@@ -54,7 +56,8 @@ export function QuestionForm({ question, onSave, onCancel }) {
       correctIndex,
       level,
       usertype: usertype,
-      explanation: explanation.trim()
+      explanation: explanation.trim(),
+      imageUrl: imageUrl.trim()
     });
   }
 
@@ -163,6 +166,17 @@ export function QuestionForm({ question, onSave, onCancel }) {
           </div>
 
           <div style={styles.formGroup}>
+            <label>Image URL (optional):</label>
+            <input
+              type="url"
+              value={imageUrl}
+              onChange={(e) => setImageUrl(e.target.value)}
+              placeholder="https://firebasestorage.googleapis.com/..."
+              style={styles.textInput}
+            />
+          </div>
+
+          <div style={styles.formGroup}>
             <label>Explanation (optional):</label>
             <textarea
               value={explanation}
@@ -214,6 +228,13 @@ const styles = {
     borderRadius: '4px',
     boxSizing: 'border-box',
     fontFamily: 'inherit'
+  },
+  textInput: {
+    width: '100%',
+    padding: '0.5rem',
+    border: '1px solid #ccc',
+    borderRadius: '4px',
+    boxSizing: 'border-box'
   },
   optionRow: {
     display: 'flex',
