@@ -36,6 +36,9 @@ export function Dashboard() {
   }, []);
 
   // Subscribe to current user's staging batches
+  // Note: Avoid server-side orderBy to prevent needing a composite index
+  // (where('createdByUid', '==', uid) + orderBy('createdAt', 'desc') requires an index).
+  // We fetch with equality filter only and sort by createdAt on the client.
   useEffect(() => {
     if (!db) {
       setMyLoading(false);
@@ -49,12 +52,17 @@ export function Dashboard() {
     setMyLoading(true);
     const qBatches = query(
       collection(db, 'stagingBatches'),
-      where('createdByUid', '==', currentUser.uid),
-      orderBy('createdAt', 'desc')
+      where('createdByUid', '==', currentUser.uid)
     );
     const unsub = onSnapshot(qBatches, (snap) => {
       const items = [];
       snap.forEach((d) => items.push({ id: d.id, ...d.data() }));
+      // Client-side sort by createdAt desc
+      items.sort((a, b) => {
+        const aDate = a.createdAt?.toDate ? a.createdAt.toDate() : (a.createdAt ? new Date(a.createdAt) : new Date(0));
+        const bDate = b.createdAt?.toDate ? b.createdAt.toDate() : (b.createdAt ? new Date(b.createdAt) : new Date(0));
+        return bDate.getTime() - aDate.getTime();
+      });
       setMyBatches(items);
       setMyLoading(false);
     }, () => setMyLoading(false));
