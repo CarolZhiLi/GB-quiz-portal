@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { collection, getDocs, setDoc, updateDoc, deleteDoc, doc, addDoc } from 'firebase/firestore';
+import { collection, getDocs, setDoc, updateDoc, deleteDoc, doc, addDoc, onSnapshot, query, where, orderBy } from 'firebase/firestore';
 import { ref as storageRef, uploadBytes, deleteObject } from 'firebase/storage';
 import { db, storage, auth } from '../firebase/config';
 import { QuestionForm } from './QuestionForm';
@@ -15,7 +15,7 @@ const STORAGE_GS_PREFIX = `gs://${STORAGE_BUCKET}/`;
 
 export function Dashboard() {
   const navigate = useNavigate();
-  const { isAdmin } = useAuth();
+  const { isAdmin, currentUser } = useAuth();
   const [questions, setQuestions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [editingQuestion, setEditingQuestion] = useState(null);
@@ -23,10 +23,58 @@ export function Dashboard() {
   const [showBulkUpload, setShowBulkUpload] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
   const pageSize = 50;
+  // My submissions (staging) state
+  const [myBatches, setMyBatches] = useState([]);
+  const [myLoading, setMyLoading] = useState(true);
+  const [selectedMyBatchId, setSelectedMyBatchId] = useState(null);
+  const [myBatchQuestions, setMyBatchQuestions] = useState([]);
+  const [editingStaged, setEditingStaged] = useState(null); // { batchId, qid, data }
+  const [editingStagedData, setEditingStagedData] = useState(null);
 
   useEffect(() => {
     loadQuestions();
   }, []);
+
+  // Subscribe to current user's staging batches
+  useEffect(() => {
+    if (!db) {
+      setMyLoading(false);
+      return;
+    }
+    if (!currentUser?.uid) {
+      setMyBatches([]);
+      setMyLoading(false);
+      return;
+    }
+    setMyLoading(true);
+    const qBatches = query(
+      collection(db, 'stagingBatches'),
+      where('createdByUid', '==', currentUser.uid),
+      orderBy('createdAt', 'desc')
+    );
+    const unsub = onSnapshot(qBatches, (snap) => {
+      const items = [];
+      snap.forEach((d) => items.push({ id: d.id, ...d.data() }));
+      setMyBatches(items);
+      setMyLoading(false);
+    }, () => setMyLoading(false));
+    return () => unsub();
+  }, [currentUser?.uid]);
+
+  // Subscribe to questions for selected batch
+  useEffect(() => {
+    if (!db || !selectedMyBatchId) {
+      setMyBatchQuestions([]);
+      return;
+    }
+    const q = collection(db, 'stagingBatches', selectedMyBatchId, 'questions');
+    const unsub = onSnapshot(q, (snap) => {
+      const items = [];
+      snap.forEach((d) => items.push({ id: d.id, ...d.data() }));
+      setMyBatchQuestions(items);
+    });
+    return () => unsub();
+  }, [selectedMyBatchId]);
 
   async function loadQuestions() {
     try {
@@ -269,6 +317,102 @@ export function Dashboard() {
     return null;
   }
 
+  // --- My Submissions helpers ---
+  async function handleResubmitBatch(batchId) {
+    try {
+      if (!db) return;
+      const note = prompt('Optional note to admin:', '');
+      await updateDoc(doc(db, 'stagingBatches', batchId), {
+        status: 'pending',
+        updatedAt: new Date(),
+        ...(typeof note === 'string' ? { notes: note } : {})
+      });
+      alert('Batch resubmitted for review.');
+    } catch (e) {
+      alert('Failed to resubmit batch: ' + e.message);
+    }
+  }
+
+  function openEditStagedQuestion(batchId, q) {
+    setEditingStaged({ batchId, qid: q.id });
+    setEditingStagedData({
+      questionText: q.questionText || '',
+      optionsText: Array.isArray(q.options) ? q.options.join('\n') : '',
+      correctIndex: typeof q.correctIndex === 'number' ? q.correctIndex : (parseInt(q.correctIndex ?? '0', 10) || 0),
+      level: typeof q.level === 'number' ? q.level : (parseInt(q.level ?? '1', 10) || 1),
+      usertypeText: Array.isArray(q.usertype) ? q.usertype.join(', ') : (q.usertype || ''),
+      imageUrl: typeof q.imageUrl === 'string' ? q.imageUrl : '',
+      explanation: q.explanation || ''
+    });
+  }
+
+  function closeEditStaged() {
+    setEditingStaged(null);
+    setEditingStagedData(null);
+  }
+
+  async function saveEditStaged() {
+    if (!editingStaged || !editingStagedData) return;
+    try {
+      const errors = [];
+      const questionText = (editingStagedData.questionText || '').trim();
+      if (!questionText) errors.push('Question text is required');
+
+      const options = (editingStagedData.optionsText || '')
+        .split('\n')
+        .map(s => s.trim())
+        .filter(Boolean);
+      if (options.length < 2) errors.push('At least 2 options required');
+
+      let correctIndex = parseInt(editingStagedData.correctIndex, 10);
+      if (isNaN(correctIndex) || correctIndex < 0 || correctIndex >= options.length) {
+        errors.push('Correct index must be within options range');
+      }
+
+      let levelNum = parseInt(editingStagedData.level, 10);
+      if (isNaN(levelNum) || levelNum < 1 || levelNum > 4) {
+        errors.push('Level must be 1-4');
+      }
+
+      const validUsertypes = ['practitioner', 'patient', 'youth'];
+      const usertypeArray = (editingStagedData.usertypeText || '')
+        .split(',')
+        .map(s => s.trim().toLowerCase())
+        .filter(Boolean)
+        .filter(ut => validUsertypes.includes(ut));
+      if (usertypeArray.length === 0) {
+        errors.push('User type must include one or more of: practitioner, patient, youth');
+      }
+
+      if (errors.length) {
+        alert(errors.join('\n'));
+        return;
+      }
+
+      const payload = {
+        questionText,
+        options,
+        correctIndex,
+        level: levelNum,
+        usertype: usertypeArray,
+        explanation: (editingStagedData.explanation || '').trim(),
+        updatedAt: new Date()
+      };
+      const trimmedImage = (editingStagedData.imageUrl || '').trim();
+      if (trimmedImage.length > 0) {
+        payload.imageUrl = trimmedImage;
+      }
+
+      const qRef = doc(db, 'stagingBatches', editingStaged.batchId, 'questions', editingStaged.qid);
+      await updateDoc(qRef, payload);
+      await updateDoc(doc(db, 'stagingBatches', editingStaged.batchId), { status: 'pending', updatedAt: new Date() });
+      closeEditStaged();
+      alert('Saved and resubmitted for review.');
+    } catch (e) {
+      alert('Failed to save: ' + e.message);
+    }
+  }
+
   const totalPages = Math.max(1, Math.ceil(questions.length / pageSize));
   const startIndex = (currentPage - 1) * pageSize;
   const pagedQuestions = questions.slice(startIndex, startIndex + pageSize);
@@ -375,6 +519,93 @@ export function Dashboard() {
         )}
       </div>
 
+      {/* My Submissions Section */}
+      <div style={styles.subSectionHeader}>
+        <h2 style={styles.subSectionTitle}>My Submissions</h2>
+      </div>
+      {!currentUser ? (
+        <div style={styles.emptyCell}>Login to view and manage your submissions.</div>
+      ) : (
+        <div style={styles.tableContainer}>
+          <table style={styles.table}>
+            <thead>
+              <tr>
+                <th style={styles.th}>Batch ID</th>
+                <th style={styles.th}>Status</th>
+                <th style={styles.th}>Totals</th>
+                <th style={styles.th}>Note</th>
+                <th style={styles.th}>Created</th>
+                <th style={styles.th}>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {myLoading ? (
+                <tr><td style={styles.td} colSpan="6">Loading submissions...</td></tr>
+              ) : (myBatches.length === 0 ? (
+                <tr><td style={styles.td} colSpan="6">No submissions yet.</td></tr>
+              ) : (
+                myBatches.map((b) => (
+                  <tr key={b.id}>
+                    <td style={styles.td}>{b.id}</td>
+                    <td style={styles.td}>{b.status || 'pending'}</td>
+                    <td style={styles.td}>
+                      {(b.totals?.success || 0)}/{b.totals?.total || 0}
+                      {b.totals?.error ? ` · ${b.totals.error} err` : ''}
+                    </td>
+                    <td style={styles.td}>{b.notes || '-'}</td>
+                    <td style={styles.td}>{b.createdAt?.toDate ? b.createdAt.toDate().toLocaleString() : (b.createdAt ? new Date(b.createdAt).toLocaleString() : 'N/A')}</td>
+                    <td style={styles.td}>
+                      <button style={styles.smallBtn} onClick={() => setSelectedMyBatchId(b.id)}>View</button>
+                      <button style={styles.smallBtn} onClick={() => handleResubmitBatch(b.id)} disabled={(b.status || 'pending') === 'pending'}>Resubmit</button>
+                    </td>
+                  </tr>
+                ))
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {!!selectedMyBatchId && (
+        <div style={styles.tableContainer}>
+          <h3>Batch {selectedMyBatchId} Details</h3>
+          <table style={styles.table}>
+            <thead>
+              <tr>
+                <th style={styles.th}>#</th>
+                <th style={styles.th}>Question</th>
+                <th style={styles.th}>Level</th>
+                <th style={styles.th}>User Type</th>
+                <th style={styles.th}>Options</th>
+                <th style={styles.th}>Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {myBatchQuestions.length === 0 ? (
+                <tr><td style={styles.td} colSpan="6">No questions in this batch.</td></tr>
+              ) : (
+                myBatchQuestions.map((q, i) => (
+                  <tr key={q.id}>
+                    <td style={styles.td}>{i + 1}</td>
+                    <td style={styles.td}>{q.questionText}</td>
+                    <td style={styles.td}>{q.level}</td>
+                    <td style={styles.td}>{Array.isArray(q.usertype) ? q.usertype.join(', ') : ''}</td>
+                    <td style={styles.td}>{q.options?.length || 0} option(s)</td>
+                    <td style={styles.td}>
+                      {q.__action !== 'delete' ? (
+                        <button style={styles.smallBtn} onClick={() => openEditStagedQuestion(selectedMyBatchId, q)}>Edit</button>
+                      ) : (
+                        <span style={{ color: '#6c757d' }}>delete</span>
+                      )}
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      )}
+
       {showForm && (
         <QuestionForm
           question={editingQuestion}
@@ -391,6 +622,52 @@ export function Dashboard() {
           onComplete={handleBulkUploadComplete}
           onCancel={() => setShowBulkUpload(false)}
         />
+      )}
+
+      {/* Staged question editor */}
+      {editingStaged && editingStagedData && (
+        <div style={styles.overlay} onClick={() => closeEditStaged()}>
+          <div style={styles.modal} onClick={(e) => e.stopPropagation()}>
+            <h3>Edit Staged Question</h3>
+            <div style={styles.section}>
+              <label>Question Text</label>
+              <textarea style={styles.textarea} value={editingStagedData.questionText} onChange={(e) => setEditingStagedData({ ...editingStagedData, questionText: e.target.value })} />
+            </div>
+            <div style={styles.section}>
+              <label>Options (one per line)</label>
+              <textarea style={styles.textarea} value={editingStagedData.optionsText} onChange={(e) => setEditingStagedData({ ...editingStagedData, optionsText: e.target.value })} />
+            </div>
+            <div style={styles.sectionRow}>
+              <div style={{ flex: 1 }}>
+                <label>Correct Index (0-based)</label>
+                <input style={styles.input} type="number" value={editingStagedData.correctIndex} onChange={(e) => setEditingStagedData({ ...editingStagedData, correctIndex: e.target.value })} />
+              </div>
+              <div style={{ flex: 1 }}>
+                <label>Level (1-4)</label>
+                <input style={styles.input} type="number" value={editingStagedData.level} onChange={(e) => setEditingStagedData({ ...editingStagedData, level: e.target.value })} />
+              </div>
+            </div>
+            <div style={styles.sectionRow}>
+              <div style={{ flex: 1 }}>
+                <label>User Type(s) (comma separated)</label>
+                <input style={styles.input} type="text" value={editingStagedData.usertypeText} onChange={(e) => setEditingStagedData({ ...editingStagedData, usertypeText: e.target.value })} />
+              </div>
+              <div style={{ flex: 1 }}>
+                <label>Image URL (optional)</label>
+                <input style={styles.input} type="text" value={editingStagedData.imageUrl || ''} onChange={(e) => setEditingStagedData({ ...editingStagedData, imageUrl: e.target.value })} />
+              </div>
+            </div>
+            <div style={styles.section}>
+              <label>Explanation (optional)</label>
+              <textarea style={styles.textarea} value={editingStagedData.explanation || ''} onChange={(e) => setEditingStagedData({ ...editingStagedData, explanation: e.target.value })} />
+            </div>
+
+            <div style={styles.buttonGroup}>
+              <button style={styles.uploadButton} onClick={() => saveEditStaged()}>Save</button>
+              <button style={styles.cancelButton} onClick={() => closeEditStaged()}>Cancel</button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
@@ -512,5 +789,33 @@ const styles = {
     textAlign: 'center',
     padding: '2rem',
     fontSize: '1.2rem'
-  }
+  },
+  subSectionHeader: {
+    marginTop: '2rem',
+    marginBottom: '0.5rem',
+    borderTop: '2px solid #eee',
+    paddingTop: '1rem'
+  },
+  subSectionTitle: {
+    margin: 0
+  },
+  smallBtn: {
+    padding: '0.25rem 0.5rem',
+    marginRight: '0.5rem',
+    backgroundColor: '#e9ecef',
+    border: '1px solid #ccc',
+    borderRadius: '4px',
+    cursor: 'pointer'
+  },
+  overlay: {
+    position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+    backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000
+  },
+  modal: {
+    backgroundColor: '#fff', padding: '1rem', borderRadius: '4px', width: '90%', maxWidth: '720px', maxHeight: '90vh', overflow: 'auto'
+  },
+  section: { marginBottom: '1rem' },
+  sectionRow: { display: 'flex', gap: '1rem', marginBottom: '1rem' },
+  input: { width: '100%', padding: '0.5rem', border: '1px solid #ccc', borderRadius: '4px' },
+  textarea: { width: '100%', minHeight: '80px', padding: '0.5rem', border: '1px solid #ccc', borderRadius: '4px' }
 };
