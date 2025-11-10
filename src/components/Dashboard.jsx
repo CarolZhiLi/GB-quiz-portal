@@ -1,10 +1,11 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { collection, getDocs, setDoc, updateDoc, deleteDoc, doc } from 'firebase/firestore';
+import { collection, getDocs, setDoc, updateDoc, deleteDoc, doc, addDoc } from 'firebase/firestore';
 import { ref as storageRef, uploadBytes, deleteObject } from 'firebase/storage';
-import { db, storage } from '../firebase/config';
+import { db, storage, auth } from '../firebase/config';
 import { QuestionForm } from './QuestionForm';
 import { BulkUpload } from './BulkUpload';
+import { useAuth } from '../contexts/AuthContext';
 
 const STORAGE_BUCKET =
   import.meta.env.VITE_FIREBASE_STORAGE_BUCKET ||
@@ -14,6 +15,7 @@ const STORAGE_GS_PREFIX = `gs://${STORAGE_BUCKET}/`;
 
 export function Dashboard() {
   const navigate = useNavigate();
+  const { isAdmin } = useAuth();
   const [questions, setQuestions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [editingQuestion, setEditingQuestion] = useState(null);
@@ -94,31 +96,54 @@ export function Dashboard() {
 
       const shouldUploadImage = typeof File !== 'undefined' ? imageFile instanceof File : !!imageFile;
       const previousImageUrl = editingQuestion?.imageUrl;
-      let docRef;
 
-      if (editingQuestion) {
-        docRef = doc(db, 'quizQuestions', editingQuestion.id);
-        if (shouldUploadImage) {
-          const imagePath = await uploadQuestionImage(docRef.id, imageFile);
-          dataToSave.imageUrl = imagePath;
-          await deleteQuestionImage(previousImageUrl);
-        } else if (shouldRemoveImageField({ removeExistingImage, previousImageUrl, nextImageUrl: dataToSave.imageUrl })) {
-          await deleteQuestionImage(previousImageUrl);
-          delete dataToSave.imageUrl;
-        } else if (!dataToSave.imageUrl && previousImageUrl) {
-          dataToSave.imageUrl = previousImageUrl;
-        } else if (dataToSave.imageUrl && previousImageUrl && dataToSave.imageUrl !== previousImageUrl) {
-          await deleteQuestionImage(previousImageUrl);
+      if (isAdmin) {
+        let docRef;
+        if (editingQuestion) {
+          docRef = doc(db, 'quizQuestions', editingQuestion.id);
+          if (shouldUploadImage) {
+            const imagePath = await uploadQuestionImage(docRef.id, imageFile);
+            dataToSave.imageUrl = imagePath;
+            await deleteQuestionImage(previousImageUrl);
+          } else if (shouldRemoveImageField({ removeExistingImage, previousImageUrl, nextImageUrl: dataToSave.imageUrl })) {
+            await deleteQuestionImage(previousImageUrl);
+            delete dataToSave.imageUrl;
+          } else if (!dataToSave.imageUrl && previousImageUrl) {
+            dataToSave.imageUrl = previousImageUrl;
+          } else if (dataToSave.imageUrl && previousImageUrl && dataToSave.imageUrl !== previousImageUrl) {
+            await deleteQuestionImage(previousImageUrl);
+          }
+          await updateDoc(docRef, dataToSave);
+        } else {
+          docRef = doc(collection(db, 'quizQuestions'));
+          if (shouldUploadImage) {
+            const imagePath = await uploadQuestionImage(docRef.id, imageFile);
+            dataToSave.imageUrl = imagePath;
+          }
+          dataToSave.createdAt = new Date();
+          await setDoc(docRef, dataToSave);
         }
-        await updateDoc(docRef, dataToSave);
       } else {
-        docRef = doc(collection(db, 'quizQuestions'));
-        if (shouldUploadImage) {
-          const imagePath = await uploadQuestionImage(docRef.id, imageFile);
-          dataToSave.imageUrl = imagePath;
-        }
-        dataToSave.createdAt = new Date();
-        await setDoc(docRef, dataToSave);
+        // Non-admin: stage this change as a single-item batch
+        const batchRef = await addDoc(collection(db, 'stagingBatches'), {
+          status: 'pending',
+          createdAt: new Date(),
+          createdByUid: auth?.currentUser?.uid || null,
+          createdByEmail: auth?.currentUser?.email || null,
+          totals: { success: 1, error: 0, total: 1 },
+          notes: 'single-item change from dashboard'
+        });
+        const action = editingQuestion ? 'update' : 'create';
+        const questionPayload = {
+          ...dataToSave,
+          createdAt: editingQuestion?.createdAt || new Date(),
+          published: false,
+          publishedBatchId: null,
+          __action: action,
+          __targetId: editingQuestion?.id || null
+        };
+        await addDoc(collection(db, 'stagingBatches', batchRef.id, 'questions'), questionPayload);
+        alert(`Change submitted for admin review. Batch: ${batchRef.id}`);
       }
 
       setShowForm(false);
@@ -140,8 +165,25 @@ export function Dashboard() {
         alert('Firebase not configured. Please update src/firebase/config.js with your Firebase credentials.');
         return;
       }
-      await deleteDoc(doc(db, 'quizQuestions', questionId));
-      loadQuestions();
+      if (isAdmin) {
+        await deleteDoc(doc(db, 'quizQuestions', questionId));
+        loadQuestions();
+      } else {
+        const batchRef = await addDoc(collection(db, 'stagingBatches'), {
+          status: 'pending',
+          createdAt: new Date(),
+          createdByUid: auth?.currentUser?.uid || null,
+          createdByEmail: auth?.currentUser?.email || null,
+          totals: { success: 1, error: 0, total: 1 },
+          notes: 'delete request from dashboard'
+        });
+        await addDoc(collection(db, 'stagingBatches', batchRef.id, 'questions'), {
+          __action: 'delete',
+          __targetId: questionId,
+          createdAt: new Date()
+        });
+        alert(`Delete request submitted for admin review. Batch: ${batchRef.id}`);
+      }
     } catch (error) {
       console.error('Error deleting question:', error);
       alert('Error deleting question: ' + error.message);
@@ -249,6 +291,9 @@ export function Dashboard() {
         <button onClick={handleAddNew} style={styles.addButton}>Add New Question</button>
         <button onClick={() => setShowBulkUpload(true)} style={styles.uploadButton}>Bulk Upload</button>
         <button onClick={() => navigate('/quiz-generator')} style={styles.generatorButton}>Quiz Generator</button>
+        {isAdmin && (
+          <button onClick={() => navigate('/admin-review')} style={styles.reviewButton}>Admin Review</button>
+        )}
       </div>
 
       <div style={styles.tableContainer}>
@@ -389,6 +434,15 @@ const styles = {
     padding: '0.75rem 1.5rem',
     backgroundColor: '#6f42c1',
     color: 'white',
+    border: 'none',
+    borderRadius: '4px',
+    cursor: 'pointer',
+    fontSize: '1rem'
+  },
+  reviewButton: {
+    padding: '0.75rem 1.5rem',
+    backgroundColor: '#ffc107',
+    color: '#212529',
     border: 'none',
     borderRadius: '4px',
     cursor: 'pointer',
