@@ -12,6 +12,8 @@ export function Dashboard() {
   const [editingQuestion, setEditingQuestion] = useState(null);
   const [showForm, setShowForm] = useState(false);
   const [showBulkUpload, setShowBulkUpload] = useState(false);
+  const [currentPage, setCurrentPage] = useState(1);
+  const pageSize = 50;
 
   useEffect(() => {
     loadQuestions();
@@ -54,6 +56,7 @@ export function Dashboard() {
       });
       
       setQuestions(questionsData);
+      setCurrentPage(1);
     } catch (error) {
       console.error('Error loading questions:', error);
       setQuestions([]);
@@ -122,6 +125,10 @@ export function Dashboard() {
     loadQuestions();
   }
 
+  const totalPages = Math.max(1, Math.ceil(questions.length / pageSize));
+  const startIndex = (currentPage - 1) * pageSize;
+  const pagedQuestions = questions.slice(startIndex, startIndex + pageSize);
+
   if (loading) {
     return (
       <div style={styles.container}>
@@ -146,6 +153,7 @@ export function Dashboard() {
         <table style={styles.table}>
           <thead>
             <tr>
+              <th style={styles.th}>No.</th>
               <th style={styles.th}>Question Text</th>
               <th style={styles.th}>Level</th>
               <th style={styles.th}>User Type</th>
@@ -157,11 +165,12 @@ export function Dashboard() {
           <tbody>
             {questions.length === 0 ? (
               <tr>
-                <td colSpan="6" style={styles.emptyCell}>No questions found. Add your first question!</td>
+                <td colSpan="7" style={styles.emptyCell}>No questions found. Add your first question!</td>
               </tr>
             ) : (
-              questions.map((question) => (
+              pagedQuestions.map((question, idx) => (
                 <tr key={question.id}>
+                  <td style={styles.td}>{startIndex + idx + 1}</td>
                   <td style={styles.td}>{question.questionText}</td>
                   <td style={styles.td}>{question.level}</td>
                   <td style={styles.td}>
@@ -196,6 +205,27 @@ export function Dashboard() {
             )}
           </tbody>
         </table>
+        {questions.length > 0 && (
+          <div style={styles.pagination}>
+            <button
+              style={styles.pageButton}
+              disabled={currentPage === 1}
+              onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+            >
+              Prev
+            </button>
+            <span style={styles.pageInfo}>
+              Page {currentPage} of {totalPages} · Showing {startIndex + 1}-{Math.min(startIndex + pageSize, questions.length)} of {questions.length}
+            </span>
+            <button
+              style={styles.pageButton}
+              disabled={currentPage >= totalPages}
+              onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+            >
+              Next
+            </button>
+          </div>
+        )}
       </div>
 
       {showForm && (
@@ -303,6 +333,24 @@ const styles = {
     border: 'none',
     borderRadius: '4px',
     cursor: 'pointer'
+  },
+  pagination: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: '1rem'
+  },
+  pageButton: {
+    padding: '0.5rem 1rem',
+    backgroundColor: '#f1f3f5',
+    color: '#333',
+    border: '1px solid #ccc',
+    borderRadius: '4px',
+    cursor: 'pointer',
+    minWidth: '80px'
+  },
+  pageInfo: {
+    color: '#555'
   },
   loading: {
     textAlign: 'center',
