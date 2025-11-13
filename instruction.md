@@ -51,15 +51,15 @@ This walkthrough describes the exact steps operational contributors and admins s
 
 ## 5. Quick Reference
 
-| Action | Operational | Admin |
-| --- | --- | --- |
-| View dashboard / generator | ✅ | ✅ |
-| Delete live questions | ❌ | ✅ |
-| Submit new/edited questions | ✅ (staging) | ✅ (live or staging) |
-| View My Submissions | ✅ | ❌ |
-| Delete own staging batch | ✅ (only batches they created) | ❌ *(use Admin Review cleanup instead)* |
-| Access Admin Review | ❌ | ✅ |
-| Approve/reject staging batches | ❌ | ✅ |
-| Delete staging batch after 14 days | ❌ | ✅ (via Admin Review) |
+| Action                            | Operational  | Admin  
+| ---                               | ---          | ---    
+| View dashboard / generator        | ✅           | ✅ 
+| Delete live questions             | ❌           | ✅ 
+| Submit new/edited questions       | ✅ (staging) | ✅ (live or staging) 
+| View My Submissions               | ✅           | ❌ 
+| Delete own staging batch          | ✅           | ❌ *(use Admin Review cleanup instead)* 
+| Access Admin Review               | ❌           | ✅ 
+| Approve/reject staging batches    | ❌           | ✅ 
+| Delete staging batch after 14d    | ❌           | ✅ (via Admin Review) 
 
 Use this guide alongside `README.md` whenever onboarding a new teammate or revisiting the workflow.
