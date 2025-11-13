@@ -8,6 +8,7 @@ A functional web portal for managing quiz questions in the Granville Biomedical 
 - **Question Management**: Create, read, update, and delete quiz questions
 - **Bulk Upload**: Upload multiple questions from CSV or Excel files
 - **Protected Routes**: Only authenticated operational or admin users can access the portal; operational users can edit/submit content while admin users can also approve and publish it
+- **Role-aware UI**: Built-in header with logout for signed-in users plus an Access Denied view for accounts lacking the required custom claims
 
 ## Role Setup (Quick Start)
 
@@ -149,16 +150,17 @@ Only authenticated users with the `operational` or `admin` claim can enter the p
 
 - **Login**
   - Navigate to `/login` and sign in with Email/Password.
-  - The email/password account must bear the `operational` and/or `admin` custom claim (see above).
+  - The email/password account must bear the `operational` and/or `admin` custom claim (see above). Once signed in, the header shows your email plus a logout button.
 - **Operational workflow**
   - Operational users can access the Dashboard, generate questions, bulk upload, and edit staging batches they own.
   - All changes are staged for approval; operational users cannot publish directly to `quizQuestions`.
-  - Operational users do not see the `/admin-review` page.
+  - Operational users do not see the `/admin-review` page, but they do see "My Submissions" where they can resubmit or delete their own staging batches (live questions remain admin-only).
 
 - **Admin workflow**
   - Admin users also see the Dashboard and generator plus the `/admin-review` route.
   - The Admin Review page lets them approve or reject staged batches, which publishes approved items to `quizQuestions`.
   - Approving a batch handles `create`, `update`, and `delete` actions from staging and chunks writes to avoid Firestore limits.
+  - Admins can delete staged batches from the review table once a batch has remained approved or rejected for at least 14 days to keep the staging area tidy.
 
 - **Non-role accounts**
   - Signing in with an account that lacks both roles results in an access denied notice.
@@ -166,6 +168,8 @@ Only authenticated users with the `operational` or `admin` claim can enter the p
 - **Troubleshooting**
   - "Missing or insufficient permissions" when approving a batch usually means your token lacks `admin: true` or the new rules were not deployed.
   - Confirm you are using the right Firebase project (check `.env.local` vs the service account key).
+
+For a step-by-step walkthrough of each role, see [`instruction.md`](instruction.md).
 
 ## Two‑Stage Upload Workflow
 
@@ -247,10 +251,10 @@ npm run build
 3. Modify the fields
 4. Click "Save"
 
-### Deleting a Question
+### Deleting a Question (admin only)
 
 1. Find the question in the table
-2. Click "Delete" button
+2. Click the "Delete" button (visible to admins only)
 3. Confirm the deletion
 
 ### Bulk Upload
