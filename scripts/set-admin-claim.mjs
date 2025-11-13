@@ -1,6 +1,7 @@
 // Usage:
-//   Set admin:   node scripts/set-admin-claim.mjs user@example.com [--key=C:\path\to\service-account.json]
-//   Unset admin: node scripts/set-admin-claim.mjs user@example.com --unset [--key=...]
+//   Set admin:       node scripts/set-admin-claim.mjs user@example.com [--key=C:\path\to\service-account.json]
+//   Set operational: node scripts/set-admin-claim.mjs user@example.com --role=operational [--key=...]
+//   Unset role:      node scripts/set-admin-claim.mjs user@example.com --role=operational --unset [--key=...]
 //
 // Auth:
 // - Preferred: set env var GOOGLE_APPLICATION_CREDENTIALS to your service account JSON
@@ -11,21 +12,25 @@
 import admin from 'firebase-admin';
 import fs from 'node:fs';
 
+const VALID_ROLES = ['admin', 'operational'];
+
 function parseArgs(argv = []) {
-  const out = { email: null, keyPath: null, unset: false };
+  const out = { email: null, keyPath: null, unset: false, role: 'admin' };
   for (const a of argv) {
     if (a === '--unset') out.unset = true;
     else if (a.startsWith('--key=')) out.keyPath = a.slice('--key='.length);
+    else if (a.startsWith('--role=')) out.role = a.slice('--role='.length).toLowerCase();
     else if (!out.email) out.email = a;
   }
   return out;
 }
 
 function printUsage() {
-  console.log(`\nSet or remove custom claim admin for a Firebase user\n\n` +
+  console.log(`\nSet or remove operational/admin custom claims for a Firebase user\n\n` +
     `Examples:\n` +
     `  node scripts/set-admin-claim.mjs user@example.com\n` +
-    `  node scripts/set-admin-claim.mjs user@example.com --unset\n` +
+    `  node scripts/set-admin-claim.mjs user@example.com --role=operational\n` +
+    `  node scripts/set-admin-claim.mjs user@example.com --role=operational --unset\n` +
     `  node scripts/set-admin-claim.mjs user@example.com --key=C:\\secrets\\firebase-admin-key.json\n\n` +
     `Auth options:\n` +
     `  - Set env GOOGLE_APPLICATION_CREDENTIALS to service account JSON\n` +
@@ -53,9 +58,13 @@ function initAdminOrThrow(keyPath) {
 }
 
 async function main() {
-  const { email, keyPath, unset } = parseArgs(process.argv.slice(2));
+  const { email, keyPath, unset, role } = parseArgs(process.argv.slice(2));
   if (!email) {
     printUsage();
+    process.exit(1);
+  }
+  if (!VALID_ROLES.includes(role)) {
+    console.error(`Role must be one of: ${VALID_ROLES.join(', ')}`);
     process.exit(1);
   }
 
@@ -70,13 +79,13 @@ async function main() {
     const user = await admin.auth().getUserByEmail(email);
     const nextClaims = { ...(user.customClaims || {}) };
     if (unset) {
-      delete nextClaims.admin;
+      delete nextClaims[role];
     } else {
-      nextClaims.admin = true;
+      nextClaims[role] = true;
     }
     await admin.auth().setCustomUserClaims(user.uid, nextClaims);
     const updated = await admin.auth().getUser(user.uid);
-    console.log('Success. Claims for', email, '=>', updated.customClaims || {});
+    console.log(`Success. ${role} claim updated for ${email} =>`, updated.customClaims || {});
     console.log('Note: Sign out and sign back in for the client to see updated claims.');
     process.exit(0);
   } catch (err) {

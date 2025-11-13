@@ -12,10 +12,17 @@ export function useAuth() {
   return useContext(AuthContext);
 }
 
+function createRoleState(claims = {}) {
+  return {
+    admin: claims.admin === true,
+    operational: claims.operational === true
+  };
+}
+
 export function AuthProvider({ children }) {
   const [currentUser, setCurrentUser] = useState(null);
+  const [roles, setRoles] = useState(() => createRoleState());
   const [loading, setLoading] = useState(true);
-  const [isAdmin, setIsAdmin] = useState(false);
 
   function login(email, password) {
     if (!auth) {
@@ -33,35 +40,47 @@ export function AuthProvider({ children }) {
 
   useEffect(() => {
     if (!auth) {
+      setRoles(createRoleState());
       setLoading(false);
-      setIsAdmin(false);
       return;
     }
 
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       setCurrentUser(user);
-      if (user) {
-        try {
-          await user.getIdToken(true); // force refresh to pick up new custom claims
-          const res = await user.getIdTokenResult();
-          setIsAdmin(res.claims?.admin === true);
-        } catch (_) {
-          setIsAdmin(false);
-        } finally {
-          setLoading(false);
-        }
+      if (!user) {
+        setRoles(createRoleState());
+        setLoading(false);
         return;
       }
-      setIsAdmin(false);
-      setLoading(false);
+      try {
+        await user.getIdToken(true); // force refresh to pick up new custom claims
+        const res = await user.getIdTokenResult();
+        setRoles(createRoleState(res.claims));
+      } catch (_) {
+        setRoles(createRoleState());
+      } finally {
+        setLoading(false);
+      }
     });
 
     return unsubscribe;
   }, []);
 
+  const isAdmin = roles.admin;
+  const isOperational = roles.operational;
+  const canAccessPortal = isAdmin || isOperational;
+
+  const hasRole = (role) => roles[role] === true;
+  const hasAnyRole = (candidates = []) => candidates.some((role) => hasRole(role));
+
   const value = {
     currentUser,
+    roles,
     isAdmin,
+    isOperational,
+    hasRole,
+    hasAnyRole,
+    canAccessPortal,
     login,
     logout
   };

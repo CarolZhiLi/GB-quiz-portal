@@ -1,7 +1,7 @@
 // Usage:
-//   node scripts/list-admins.mjs [--key=C:\path\to\service-account.json] [--all]
+//   node scripts/list-admins.mjs [--key=C:\path\to\service-account.json] [--role=operational] [--all]
 //
-// - Without --all: prints only users with customClaims.admin === true
+// - Without --all: prints only users whose matching custom claim is true (defaults to admin)
 // - With --all: prints every user and their custom claims
 //
 // Auth options:
@@ -10,11 +10,14 @@
 import admin from 'firebase-admin';
 import fs from 'node:fs';
 
+const VALID_ROLES = ['admin', 'operational'];
+
 function parseArgs(argv = []) {
-  const out = { keyPath: null, all: false };
+  const out = { keyPath: null, all: false, role: 'admin' };
   for (const a of argv) {
     if (a === '--all') out.all = true;
     else if (a.startsWith('--key=')) out.keyPath = a.slice('--key='.length);
+    else if (a.startsWith('--role=')) out.role = a.slice('--role='.length).toLowerCase();
   }
   return out;
 }
@@ -48,10 +51,10 @@ async function listAllUsers() {
   return out;
 }
 
-function printUsers(users, { all }) {
-  const filtered = all ? users : users.filter(u => u.customClaims && u.customClaims.admin === true);
+function printUsers(users, { all, role }) {
+  const filtered = all ? users : users.filter((u) => u.customClaims && u.customClaims[role] === true);
   if (!filtered.length) {
-    console.log(all ? 'No users found.' : 'No admin users found.');
+    console.log(all ? 'No users found.' : `No ${role} users found.`);
     return;
   }
   for (const u of filtered) {
@@ -63,6 +66,10 @@ function printUsers(users, { all }) {
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
+  if (!VALID_ROLES.includes(args.role)) {
+    console.error(`Role must be one of: ${VALID_ROLES.join(', ')}`);
+    process.exit(1);
+  }
   try {
     initAdminOrThrow(args.keyPath);
   } catch (e) {

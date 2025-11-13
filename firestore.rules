@@ -9,26 +9,39 @@ service cloud.firestore {
       return isSignedIn() && (request.auth.token.admin == true);
     }
 
+    function isOperational() {
+      return isSignedIn() && (request.auth.token.operational == true);
+    }
+
+    function canModifyStaging() {
+      return isAdmin() || isOperational();
+    }
+
     // Live Quiz Questions - public read, admin-only writes
     match /quizQuestions/{questionId} {
       allow read: if true;
       allow create, update, delete: if isAdmin();
     }
+    
+    match /subscriptions/{userId} {
+  allow create: if isSignedIn() && request.auth.uid == userId;
+  allow read, update: if isAdmin() || (isSignedIn() && request.auth.uid == userId);
+  allow delete: if isAdmin();
+}
 
     // Staging batches metadata
     match /stagingBatches/{batchId} {
-      // Anyone can read batch metadata (adjust to isAdmin() if you want private)
+      // Batch metadata remains readable by anyone.
       allow read: if true;
 
-      // Allow batch creation without auth for development convenience
-      // For production, change to: if isSignedIn();
-      allow create: if true;
+      // Only operational or admin users can write batches.
+      allow create: if canModifyStaging();
 
-      // Allow updates/deletes by admin OR by the creator.
-      // Also allow unauthenticated updates if the creator is anonymous (createdByUid == null).
-      allow update, delete: if isAdmin() ||
-        (isSignedIn() && request.auth.uid == resource.data.createdByUid) ||
-        (!isSignedIn() && resource.data.createdByUid == null);
+      // Updates/deletes are allowed for admin users or the original creator (who must also hold a portal role).
+      allow update, delete: if canModifyStaging() && (
+        isAdmin() ||
+        (isSignedIn() && request.auth.uid == resource.data.createdByUid)
+      );
     }
 
     // Staging questions under a batch
@@ -36,10 +49,11 @@ service cloud.firestore {
       // Anyone can read staged question docs (adjust as needed)
       allow read: if true;
 
-      // Writes allowed for admin or the creator of the parent batch.
-      allow create, update, delete: if isAdmin() ||
-        (isSignedIn() && request.auth.uid == get(/databases/$(database)/documents/stagingBatches/$(batchId)).data.createdByUid) ||
-        (!isSignedIn() && get(/databases/$(database)/documents/stagingBatches/$(batchId)).data.createdByUid == null);
+      // Writes allowed only for portal participants owning the parent batch (or admin).
+      allow create, update, delete: if canModifyStaging() && (
+        isAdmin() ||
+        (isSignedIn() && request.auth.uid == get(/databases/$(database)/documents/stagingBatches/$(batchId)).data.createdByUid)
+      );
     }
   }
 }

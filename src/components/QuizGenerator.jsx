@@ -1,7 +1,8 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { collection, addDoc } from "firebase/firestore";
+import { collection, addDoc, doc, updateDoc } from "firebase/firestore";
 import { db } from "../firebase/config";
+import { useAuth } from "../contexts/AuthContext";
 
 // Edit Question Form Component
 function EditQuestionForm({ question, onSave, onCancel }) {
@@ -104,6 +105,7 @@ function EditQuestionForm({ question, onSave, onCancel }) {
 
 export function QuizGenerator() {
   const navigate = useNavigate();
+  const { isAdmin, currentUser } = useAuth();
   const [loading, setLoading] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [prompt, setPrompt] = useState("");
@@ -115,6 +117,84 @@ export function QuizGenerator() {
   const [apiKey, setApiKey] = useState("");
   const [apiProvider, setApiProvider] = useState("gemini"); // gemini
   const [editingIndex, setEditingIndex] = useState(null);
+
+  function buildBaseQuestionPayload(question) {
+    return {
+      questionText: question.questionText,
+      options: question.options,
+      correctIndex: question.correctIndex,
+      level: Number(selectedLevel),
+      usertype: [...selectedUserType],
+      explanation: question.explanation || ""
+    };
+  }
+
+  function buildLiveQuestionPayload(question) {
+    const base = buildBaseQuestionPayload(question);
+    const timestamp = new Date();
+    return {
+      ...base,
+      createdAt: timestamp,
+      updatedAt: timestamp
+    };
+  }
+
+  function buildStagingQuestionPayload(question) {
+    const base = buildBaseQuestionPayload(question);
+    const timestamp = new Date();
+    return {
+      ...base,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      published: false,
+      publishedBatchId: null,
+      __action: "create",
+      __targetId: null
+    };
+  }
+
+  async function persistGeneratedQuestions(questions) {
+    if (!db) {
+      throw new Error("Firebase not configured");
+    }
+    if (!questions.length) {
+      return { destination: isAdmin ? "live" : "staging", count: 0 };
+    }
+
+    if (isAdmin) {
+      let success = 0;
+      for (const question of questions) {
+        await addDoc(collection(db, "quizQuestions"), buildLiveQuestionPayload(question));
+        success++;
+      }
+      return { destination: "live", count: success };
+    }
+
+    const batchRef = await addDoc(collection(db, "stagingBatches"), {
+      status: "pending",
+      createdAt: new Date(),
+      createdByUid: currentUser?.uid || null,
+      createdByEmail: currentUser?.email || null,
+      totals: { success: 0, error: 0, total: questions.length },
+      notes: "AI generator submission"
+    });
+
+    let success = 0;
+    for (const question of questions) {
+      await addDoc(
+        collection(db, "stagingBatches", batchRef.id, "questions"),
+        buildStagingQuestionPayload(question)
+      );
+      success++;
+    }
+
+    await updateDoc(doc(db, "stagingBatches", batchRef.id), {
+      totals: { success, error: 0, total: questions.length },
+      updatedAt: new Date()
+    });
+
+    return { destination: "staging", count: success, batchId: batchRef.id };
+  }
 
   useEffect(() => {
     // Load API key from env or localStorage
@@ -265,22 +345,14 @@ Do not include any text before or after the JSON array.`;
     }
 
     try {
-      await addDoc(collection(db, "quizQuestions"), {
-        questionText: question.questionText,
-        options: question.options,
-        correctIndex: question.correctIndex,
-        level: Number(selectedLevel),
-        usertype: selectedUserType,
-        explanation: question.explanation || "",
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      });
-      
-      // Remove the question from the list after saving
+      const result = await persistGeneratedQuestions([question]);
       const updated = generatedQuestions.filter((_, i) => i !== index);
       setGeneratedQuestions(updated);
-      
-      alert("Question saved successfully!");
+      if (result.destination === "live") {
+        alert("Question saved successfully!");
+      } else {
+        alert(`Question submitted for admin review. Batch: ${result.batchId}`);
+      }
     } catch (error) {
       console.error("Error saving question:", error);
       alert("Error saving question: " + error.message);
@@ -300,20 +372,15 @@ Do not include any text before or after the JSON array.`;
 
     try {
       setLoading(true);
-      for (const question of generatedQuestions) {
-        await addDoc(collection(db, "quizQuestions"), {
-          questionText: question.questionText,
-          options: question.options,
-          correctIndex: question.correctIndex,
-          level: Number(selectedLevel),
-          usertype: selectedUserType,
-          explanation: question.explanation || "",
-          createdAt: new Date(),
-          updatedAt: new Date(),
-        });
-      }
-      alert(`Successfully saved ${generatedQuestions.length} questions!`);
+      const result = await persistGeneratedQuestions(generatedQuestions);
       setGeneratedQuestions([]);
+      if (result.destination === "live") {
+        alert(`Successfully saved ${result.count} questions!`);
+      } else {
+        alert(
+          `Submitted ${result.count} questions for admin review. Batch: ${result.batchId}`
+        );
+      }
     } catch (error) {
       console.error("Error saving questions:", error);
       alert("Error saving questions: " + error.message);

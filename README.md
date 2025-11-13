@@ -7,19 +7,22 @@ A functional web portal for managing quiz questions in the Granville Biomedical 
 - **User Authentication**: Secure login with Firebase Authentication
 - **Question Management**: Create, read, update, and delete quiz questions
 - **Bulk Upload**: Upload multiple questions from CSV or Excel files
-- **Protected Routes**: Only authenticated admin users can access the portal
+- **Protected Routes**: Only authenticated operational or admin users can access the portal; operational users can edit/submit content while admin users can also approve and publish it
 
-## Admin Setup (Quick Start)
+## Role Setup (Quick Start)
 
 - Configure Firebase env vars in `.env.local` (see step 2 below) and enable Email/Password auth in Firebase Console.
-- Install Admin SDK locally for scripts: `npm i -D firebase-admin`.
-- Create a service account key: Firebase Console → Project Settings → Service accounts → Generate new private key. Save it locally, do not commit.
-- Grant admin to your account (Windows example):
+- Install the Admin SDK locally for scripts: `npm i -D firebase-admin`.
+- Create a service account key: Firebase Console → Project Settings → Service accounts → Generate new private key. Save it locally and keep it out of version control.
+- Assign the `operational` and/or `admin` custom claim to your account (Windows example):
+  - `node scripts\set-admin-claim.mjs your-email@example.com --role=operational --key="C:\\path\\to\\service-account.json"`
   - `node scripts\set-admin-claim.mjs your-email@example.com --key="C:\\path\\to\\service-account.json"`
-- macOS/Linux:
-  - `node scripts/set-admin-claim.mjs your-email@example.com --key="$HOME/path/to/service-account.json"`
-- Sign out and sign back in to refresh claims. Verify via:
-  - Open `/admin-review` (should load), or list admins with `node scripts/list-admins.mjs --key="C:\\path\\to\\service-account.json"`
+  - macOS/Linux:
+    - `node scripts/set-admin-claim.mjs your-email@example.com --role=operational --key="$HOME/path/to/service-account.json"`
+    - `node scripts/set-admin-claim.mjs your-email@example.com --key="$HOME/path/to/service-account.json"`
+- Sign out and sign back in after changing roles so the ID token refreshes.
+- Verify the role(s):
+  - Load `/admin-review` to confirm admin access, or run `node scripts/list-admins.mjs --role=operational --key="C:\\path\\to\\service-account.json"` to inspect the operational claim (omit `--role` to list admins).
 
 
 ## Setup Instructions
@@ -69,26 +72,50 @@ Example (matches the app’s default rules):
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    function isSignedIn() { return request.auth != null; }
-    function isAdmin() { return isSignedIn() && (request.auth.token.admin == true); }
+    function isSignedIn() {
+      return request.auth != null;
+    }
 
-    // Live questions: public read, admin-only write
-    match /quizQuestions/{id} {
+    function isAdmin() {
+      return isSignedIn() && (request.auth.token.admin == true);
+    }
+
+    function isOperational() {
+      return isSignedIn() && (request.auth.token.operational == true);
+    }
+
+    function canModifyStaging() {
+      return isAdmin() || isOperational();
+    }
+
+    function isParentBatchOwner(batchId) {
+      if (!isSignedIn()) {
+        return false;
+      }
+      const parent = get(/databases/$(database)/documents/stagingBatches/$(batchId));
+      return parent.exists() && request.auth.uid == parent.data.createdByUid;
+    }
+
+    match /quizQuestions/{questionId} {
       allow read: if true;
       allow create, update, delete: if isAdmin();
     }
 
-    // Staging batches
     match /stagingBatches/{batchId} {
-      allow read: if true; // adjust to isAdmin() if you want private
-      allow create: if true; // for production, consider: if isSignedIn();
-      allow update, delete: if isAdmin() || (isSignedIn() && request.auth.uid == resource.data.createdByUid) || (!isSignedIn() && resource.data.createdByUid == null);
+      allow read: if true;
+      allow create: if canModifyStaging();
+      allow update, delete: if canModifyStaging() && (
+        isAdmin() ||
+        (isSignedIn() && request.auth.uid == resource.data.createdByUid)
+      );
     }
 
-    // Staged questions
     match /stagingBatches/{batchId}/questions/{qid} {
       allow read: if true;
-      allow create, update, delete: if isAdmin() || (isSignedIn() && request.auth.uid == get(/databases/$(database)/documents/stagingBatches/$(batchId)).data.createdByUid) || (!isSignedIn() && get(/databases/$(database)/documents/stagingBatches/$(batchId)).data.createdByUid == null);
+      allow create, update, delete: if canModifyStaging() && (
+        isAdmin() ||
+        isParentBatchOwner(batchId)
+      );
     }
   }
 }
@@ -100,75 +127,45 @@ Deploy rules with Firebase CLI:
 firebase deploy --only firestore:rules
 ```
 
-### 5. Set Admin Custom Claim
+### 5. Assign Portal Roles via Custom Claims
 
-You need to set the `admin: true` custom claim for accounts that can publish to the live collection and access the Admin Review page.
+Portal access is granted through Firebase custom claims: `operational` users can create/edit staging batches and submit them for review, while `admin` users can also approve and publish to the live `quizQuestions` collection. You can use the built-in helper script to manage both roles:
 
-Options:
+- Grant the `operational` role (Windows example):  
+  `node scripts\set-admin-claim.mjs user@example.com --role=operational --key="C:\\path\\to\\service-account.json"`
+- Grant the `admin` role (defaults to admin if `--role` is omitted):
+  `node scripts\set-admin-claim.mjs user@example.com --key="C:\\path\\to\\service-account.json"`
+- Remove either role with `--unset` (e.g., `node scripts\set-admin-claim.mjs user@example.com --role=operational --unset --key=...`).
 
-1) Using Admin SDK in a small script (recommended)
+After changing claims, sign out and sign back in so the ID token refreshes and reflects the new role.
 
-Create `setAdminClaim.mjs` and run with Node (this repo uses ESM by default):
+Verify roles:
+- `node scripts/list-admins.mjs --role=operational --key="C:\\path\\to\\service-account.json"` lists users with the operational role (omit `--role` to show admins).
+- In the browser console (current user only): `await (await auth.currentUser.getIdTokenResult(true)).claims`
 
-```js
-import admin from 'firebase-admin';
-import serviceAccount from './path-to-service-account-key.json' assert { type: 'json' };
+## Portal Login and Role Behavior
 
-admin.initializeApp({
-  credential: admin.credential.cert(serviceAccount)
-});
+Only authenticated users with the `operational` or `admin` claim can enter the portal. Normal Firebase accounts without either role land on an access denied page and cannot reach the dashboard, quiz generator, or admin review views.
 
-const email = 'your-admin@email.com';
-const claims = { admin: true };
-
-const user = await admin.auth().getUserByEmail(email);
-await admin.auth().setCustomUserClaims(user.uid, claims);
-console.log('Custom claims set for', email, claims);
-process.exit(0);
-```
-
-Then run:
-
-```
-node setAdminClaim.mjs
-```
-
-2) Programmatically in a server environment (Cloud Functions, backend service)
-- Use the Admin SDK and call `setCustomUserClaims(uid, { admin: true })` during provisioning.
-
-After setting claims, the user must sign out and sign back in to refresh the ID token so the claim is visible to the client.
-
-Verify admin status quickly:
-
-- List admins via script: `node scripts/list-admins.mjs --key="C:\\path\\to\\service-account.json"`
-- Or in the browser console (for the current user only): `await (await auth.currentUser.getIdTokenResult(true)).claims`
-
-## Admin Login and Usage
-
-Admin users can log in and approve/reject staged changes before they are published to the live collection.
-
-- Login
+- **Login**
   - Navigate to `/login` and sign in with Email/Password.
-  - Ensure this account has the custom claim `admin: true` (see above).
+  - The email/password account must bear the `operational` and/or `admin` custom claim (see above).
+- **Operational workflow**
+  - Operational users can access the Dashboard, generate questions, bulk upload, and edit staging batches they own.
+  - All changes are staged for approval; operational users cannot publish directly to `quizQuestions`.
+  - Operational users do not see the `/admin-review` page.
 
-- Admin Review
-  - Navigate to `/admin-review` (visible only for admins).
-  - The left pane lists staging batches (status pending/approved/rejected) with counts and creator info.
-  - Select a batch to preview questions.
-  - Approve: publishes staged questions to `quizQuestions`.
-    - Supports create, update, and delete actions from staging:
-      - `create`: creates a new document in `quizQuestions`.
-      - `update`: updates the target document (merge semantics).
-      - `delete`: deletes the target document.
-  - Reject: marks the batch rejected (optionally add a note).
+- **Admin workflow**
+  - Admin users also see the Dashboard and generator plus the `/admin-review` route.
+  - The Admin Review page lets them approve or reject staged batches, which publishes approved items to `quizQuestions`.
+  - Approving a batch handles `create`, `update`, and `delete` actions from staging and chunks writes to avoid Firestore limits.
 
-- Non‑admin behavior
-  - Dashboard create/update/delete actions are staged automatically (they will not modify `quizQuestions`).
-  - Bulk uploads always go to staging; a batch is created and awaits admin approval.
-
-- Troubleshooting
-  - “Missing or insufficient permissions” on Approve usually means the current user isn’t an admin or the new rules weren’t deployed.
-  - Deploy rules and ensure you are logged in with an account that has `admin: true`. Sign out/in to refresh the token.
+- **Non-role accounts**
+  - Signing in with an account that lacks both roles results in an access denied notice.
+  - Ensure the account has the correct role claim and that the browser has reloaded after signing out/in.
+- **Troubleshooting**
+  - "Missing or insufficient permissions" when approving a batch usually means your token lacks `admin: true` or the new rules were not deployed.
+  - Confirm you are using the right Firebase project (check `.env.local` vs the service account key).
 
 ## Two‑Stage Upload Workflow
 

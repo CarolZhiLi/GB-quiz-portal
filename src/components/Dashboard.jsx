@@ -26,8 +26,8 @@ export function Dashboard() {
   // My submissions (staging) state
   const [myBatches, setMyBatches] = useState([]);
   const [myLoading, setMyLoading] = useState(true);
-  const [selectedMyBatchId, setSelectedMyBatchId] = useState(null);
-  const [myBatchQuestions, setMyBatchQuestions] = useState([]);
+  const [selectedBatchId, setSelectedBatchId] = useState(null);
+  const [batchQuestions, setBatchQuestions] = useState([]);
   const [editingStaged, setEditingStaged] = useState(null); // { batchId, qid, data }
   const [editingStagedData, setEditingStagedData] = useState(null);
 
@@ -71,18 +71,18 @@ export function Dashboard() {
 
   // Subscribe to questions for selected batch
   useEffect(() => {
-    if (!db || !selectedMyBatchId) {
-      setMyBatchQuestions([]);
+    if (!db || !selectedBatchId) {
+      setBatchQuestions([]);
       return;
     }
-    const q = collection(db, 'stagingBatches', selectedMyBatchId, 'questions');
+    const q = collection(db, 'stagingBatches', selectedBatchId, 'questions');
     const unsub = onSnapshot(q, (snap) => {
       const items = [];
       snap.forEach((d) => items.push({ id: d.id, ...d.data() }));
-      setMyBatchQuestions(items);
+      setBatchQuestions(items);
     });
     return () => unsub();
-  }, [selectedMyBatchId]);
+  }, [selectedBatchId]);
 
   async function loadQuestions() {
     try {
@@ -341,6 +341,44 @@ export function Dashboard() {
     }
   }
 
+  function toggleMyBatchView(batchId) {
+    setSelectedBatchId((current) => current === batchId ? null : batchId);
+  }
+
+  function canDeleteOwnBatch(batch) {
+    if (!batch || isAdmin) return false;
+    if (!currentUser?.uid) return false;
+    return batch.createdByUid === currentUser.uid;
+  }
+
+  async function handleDeleteOwnBatch(batch) {
+    if (!db || !batch?.id) return;
+    if (!canDeleteOwnBatch(batch)) {
+      alert('You can only delete batches you created.');
+      return;
+    }
+    if (!confirm('Delete this staging batch and all of its questions?')) {
+      return;
+    }
+    try {
+      const batchId = batch.id;
+      const qSnap = await getDocs(collection(db, 'stagingBatches', batchId, 'questions'));
+      const deletions = [];
+      qSnap.forEach((docSnap) => {
+        deletions.push(deleteDoc(doc(db, 'stagingBatches', batchId, 'questions', docSnap.id)));
+      });
+      await Promise.all(deletions);
+      await deleteDoc(doc(db, 'stagingBatches', batchId));
+      if (selectedBatchId === batchId) {
+        setSelectedBatchId(null);
+      }
+      alert('Batch deleted.');
+    } catch (e) {
+      console.error('Failed to delete batch:', e);
+      alert('Failed to delete batch: ' + e.message);
+    }
+  }
+
   function openEditStagedQuestion(batchId, q) {
     setEditingStaged({ batchId, qid: q.id });
     setEditingStagedData({
@@ -492,12 +530,14 @@ export function Dashboard() {
                     >
                       Edit
                     </button>
-                    <button 
-                      onClick={() => handleDelete(question.id)} 
-                      style={styles.deleteButton}
-                    >
-                      Delete
-                    </button>
+                    {isAdmin && (
+                      <button 
+                        onClick={() => handleDelete(question.id)} 
+                        style={styles.deleteButton}
+                      >
+                        Delete
+                      </button>
+                    )}
                   </td>
                 </tr>
               ))
@@ -527,91 +567,100 @@ export function Dashboard() {
         )}
       </div>
 
-      {/* My Submissions Section */}
-      <div style={styles.subSectionHeader}>
-        <h2 style={styles.subSectionTitle}>My Submissions</h2>
-      </div>
-      {!currentUser ? (
-        <div style={styles.emptyCell}>Login to view and manage your submissions.</div>
-      ) : (
-        <div style={styles.tableContainer}>
-          <table style={styles.table}>
-            <thead>
-              <tr>
-                <th style={styles.th}>Batch ID</th>
-                <th style={styles.th}>Status</th>
-                <th style={styles.th}>Totals</th>
-                <th style={styles.th}>Note</th>
-                <th style={styles.th}>Created</th>
-                <th style={styles.th}>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {myLoading ? (
-                <tr><td style={styles.td} colSpan="6">Loading submissions...</td></tr>
-              ) : (myBatches.length === 0 ? (
-                <tr><td style={styles.td} colSpan="6">No submissions yet.</td></tr>
-              ) : (
-                myBatches.map((b) => (
-                  <tr key={b.id}>
-                    <td style={styles.td}>{b.id}</td>
-                    <td style={styles.td}>{b.status || 'pending'}</td>
-                    <td style={styles.td}>
-                      {(b.totals?.success || 0)}/{b.totals?.total || 0}
-                      {b.totals?.error ? ` · ${b.totals.error} err` : ''}
-                    </td>
-                    <td style={styles.td}>{b.notes || '-'}</td>
-                    <td style={styles.td}>{b.createdAt?.toDate ? b.createdAt.toDate().toLocaleString() : (b.createdAt ? new Date(b.createdAt).toLocaleString() : 'N/A')}</td>
-                    <td style={styles.td}>
-                      <button style={styles.smallBtn} onClick={() => setSelectedMyBatchId(b.id)}>View</button>
-                      <button style={styles.smallBtn} onClick={() => handleResubmitBatch(b.id)} disabled={(b.status || 'pending') === 'pending'}>Resubmit</button>
-                    </td>
+      {!isAdmin && (
+        <>
+          {/* My Submissions Section */}
+          <div style={styles.subSectionHeader}>
+            <h2 style={styles.subSectionTitle}>My Submissions</h2>
+          </div>
+          {!currentUser ? (
+            <div style={styles.emptyCell}>Login to view and manage your submissions.</div>
+          ) : (
+            <div style={styles.tableContainer}>
+              <table style={styles.table}>
+                <thead>
+                  <tr>
+                    <th style={styles.th}>Batch ID</th>
+                    <th style={styles.th}>Status</th>
+                    <th style={styles.th}>Totals</th>
+                    <th style={styles.th}>Note</th>
+                    <th style={styles.th}>Created</th>
+                    <th style={styles.th}>Actions</th>
                   </tr>
-                ))
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+                </thead>
+                <tbody>
+                  {myLoading ? (
+                    <tr><td style={styles.td} colSpan="6">Loading submissions...</td></tr>
+                  ) : (myBatches.length === 0 ? (
+                    <tr><td style={styles.td} colSpan="6">No submissions yet.</td></tr>
+                  ) : (
+                    myBatches.map((b) => (
+                      <tr key={b.id}>
+                        <td style={styles.td}>{b.id}</td>
+                        <td style={styles.td}>{b.status || 'pending'}</td>
+                        <td style={styles.td}>
+                          {(b.totals?.success || 0)}/{b.totals?.total || 0}
+                          {b.totals?.error ? ` (${b.totals.error} err)` : ''}
+                        </td>
+                        <td style={styles.td}>{b.notes || '-'}</td>
+                        <td style={styles.td}>{b.createdAt?.toDate ? b.createdAt.toDate().toLocaleString() : (b.createdAt ? new Date(b.createdAt).toLocaleString() : 'N/A')}</td>
+                        <td style={styles.td}>
+                          <button style={styles.smallBtn} onClick={() => toggleMyBatchView(b.id)}>
+                            {selectedBatchId === b.id ? 'Hide' : 'View'}
+                          </button>
+                          <button style={styles.smallBtn} onClick={() => handleResubmitBatch(b.id)} disabled={(b.status || 'pending') === 'pending'}>Resubmit</button>
+                          {canDeleteOwnBatch(b) && (
+                            <button style={styles.smallBtn} onClick={() => handleDeleteOwnBatch(b)}>Delete</button>
+                          )}
+                        </td>
+                      </tr>
+                    ))
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
 
-      {!!selectedMyBatchId && (
-        <div style={styles.tableContainer}>
-          <h3>Batch {selectedMyBatchId} Details</h3>
-          <table style={styles.table}>
-            <thead>
-              <tr>
-                <th style={styles.th}>#</th>
-                <th style={styles.th}>Question</th>
-                <th style={styles.th}>Level</th>
-                <th style={styles.th}>User Type</th>
-                <th style={styles.th}>Options</th>
-                <th style={styles.th}>Action</th>
-              </tr>
-            </thead>
-            <tbody>
-              {myBatchQuestions.length === 0 ? (
-                <tr><td style={styles.td} colSpan="6">No questions in this batch.</td></tr>
-              ) : (
-                myBatchQuestions.map((q, i) => (
-                  <tr key={q.id}>
-                    <td style={styles.td}>{i + 1}</td>
-                    <td style={styles.td}>{q.questionText}</td>
-                    <td style={styles.td}>{q.level}</td>
-                    <td style={styles.td}>{Array.isArray(q.usertype) ? q.usertype.join(', ') : ''}</td>
-                    <td style={styles.td}>{q.options?.length || 0} option(s)</td>
-                    <td style={styles.td}>
-                      {q.__action !== 'delete' ? (
-                        <button style={styles.smallBtn} onClick={() => openEditStagedQuestion(selectedMyBatchId, q)}>Edit</button>
-                      ) : (
-                        <span style={{ color: '#6c757d' }}>delete</span>
-                      )}
-                    </td>
+          {!!selectedBatchId && (
+            <div style={styles.tableContainer}>
+              <h3>Batch {selectedBatchId} Details</h3>
+              <table style={styles.table}>
+                <thead>
+                  <tr>
+                    <th style={styles.th}>#</th>
+                    <th style={styles.th}>Question</th>
+                    <th style={styles.th}>Level</th>
+                    <th style={styles.th}>User Type</th>
+                    <th style={styles.th}>Options</th>
+                    <th style={styles.th}>Action</th>
                   </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
+                </thead>
+                <tbody>
+                  {batchQuestions.length === 0 ? (
+                    <tr><td style={styles.td} colSpan="6">No questions in this batch.</td></tr>
+                  ) : (
+                    batchQuestions.map((q, i) => (
+                      <tr key={q.id}>
+                        <td style={styles.td}>{i + 1}</td>
+                        <td style={styles.td}>{q.questionText}</td>
+                        <td style={styles.td}>{q.level}</td>
+                        <td style={styles.td}>{Array.isArray(q.usertype) ? q.usertype.join(', ') : ''}</td>
+                        <td style={styles.td}>{q.options?.length || 0} option(s)</td>
+                        <td style={styles.td}>
+                          {q.__action !== 'delete' ? (
+                            <button style={styles.smallBtn} onClick={() => openEditStagedQuestion(selectedBatchId, q)}>Edit</button>
+                          ) : (
+                            <span style={{ color: '#6c757d' }}>delete</span>
+                          )}
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </>
       )}
 
       {showForm && (
