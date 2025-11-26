@@ -197,7 +197,7 @@ export function QuizGenerator() {
   }
 
   useEffect(() => {
-    // Load API key from env or localStorage
+    // Load API key from env
     const savedKey = localStorage.getItem("ai_api_key");
     if (savedKey) {
       setApiKey(savedKey);
