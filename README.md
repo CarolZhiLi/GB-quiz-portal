@@ -47,6 +47,8 @@ npm run build
 4. Build: `npm run build`
 5. Deploy: `firebase deploy --only hosting`
 
+The application is available at `https://granvillebiomedicalapp.web.app`.
+
 
 ## Portal Login and Role Behavior
 
